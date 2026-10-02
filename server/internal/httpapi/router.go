@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"shoplist/server/internal/auth"
 	"shoplist/server/internal/store"
 )
 
@@ -24,11 +25,12 @@ type Pinger interface {
 type API struct {
 	db      Pinger
 	queries *store.Queries
+	auth    *auth.Service
 	log     *slog.Logger
 }
 
-func NewRouter(db Pinger, queries *store.Queries, log *slog.Logger) http.Handler {
-	a := &API{db: db, queries: queries, log: log}
+func NewRouter(db Pinger, queries *store.Queries, authSvc *auth.Service, log *slog.Logger) http.Handler {
+	a := &API{db: db, queries: queries, auth: authSvc, log: log}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -40,6 +42,18 @@ func NewRouter(db Pinger, queries *store.Queries, log *slog.Logger) http.Handler
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/catalog/search", a.searchCatalog)
 		r.Get("/categories", a.listCategories)
+
+		r.Post("/auth/request-code", a.requestCode)
+		r.Post("/auth/verify", a.verifyCode)
+		r.Post("/auth/refresh", a.refresh)
+		r.Post("/auth/logout", a.logout)
+
+		r.Group(func(r chi.Router) {
+			r.Use(a.requireAuth)
+			r.Get("/me", a.me)
+			r.Patch("/me", a.updateMe)
+			r.Delete("/me", a.deleteMe)
+		})
 	})
 	return r
 }

@@ -8,8 +8,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"shoplist/server/internal/auth"
 	"shoplist/server/internal/db"
 	"shoplist/server/internal/httpapi"
 	"shoplist/server/internal/store"
@@ -17,6 +21,31 @@ import (
 
 // Интеграционный тест: нужен Postgres, адрес в TEST_DATABASE_URL.
 func newTestServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv, _, _ := newTestEnv(t)
+	return srv
+}
+
+// captureMailer запоминает последний код, отправленный на каждый адрес.
+type captureMailer struct {
+	mu    sync.Mutex
+	codes map[string]string
+}
+
+func (m *captureMailer) SendLoginCode(_ context.Context, email, code string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.codes[email] = code
+	return nil
+}
+
+func (m *captureMailer) code(email string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.codes[email]
+}
+
+func newTestEnv(t *testing.T) (*httptest.Server, *captureMailer, *pgxpool.Pool) {
 	t.Helper()
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
@@ -32,9 +61,11 @@ func newTestServer(t *testing.T) *httptest.Server {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := httptest.NewServer(httpapi.NewRouter(pool, store.New(pool), log))
+	mailer := &captureMailer{codes: map[string]string{}}
+	authSvc := auth.NewService(pool, mailer, "test-secret-test-secret-test-secret-0123")
+	srv := httptest.NewServer(httpapi.NewRouter(pool, store.New(pool), authSvc, log))
 	t.Cleanup(srv.Close)
-	return srv
+	return srv, mailer, pool
 }
 
 func get(t *testing.T, url string, out any) int {

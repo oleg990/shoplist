@@ -7,7 +7,7 @@ down:
 	docker compose -f infra/docker-compose.yml down
 
 run: ## Сервер локально (Postgres должен работать: docker compose -f infra/docker-compose.yml up -d postgres)
-	cd server && DATABASE_URL="postgres://shoplist:shoplist@localhost:5432/shoplist?sslmode=disable" go run ./cmd/api
+	cd server && DATABASE_URL="postgres://shoplist:shoplist@localhost:5432/shoplist?sslmode=disable" JWT_SECRET="dev-only-secret-change-me-0123456789abcdef" go run ./cmd/api
 
 test:
 	cd server && go test ./...
