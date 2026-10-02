@@ -36,7 +36,8 @@
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
     "test": "jest",
-    "export:web": "expo export --platform web"
+    "export:web": "expo export --platform web",
+    "test:e2e": "jest e2e"
   },
   "private": true,
   "jest": {
