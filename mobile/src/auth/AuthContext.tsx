@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, setSignedOutHandler, type User } from '../api';
+import { clearLocalData } from '../sync/localData';
 
 type AuthState = {
   loading: boolean;
@@ -15,7 +16,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
-    setSignedOutHandler(() => setUser(null));
+    setSignedOutHandler(() => {
+      setUser(null);
+      void clearLocalData();
+    });
     let alive = true;
     (async () => {
       const s = await api.session();
@@ -36,6 +40,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = useCallback(async () => {
     await api.logout();
     setUser(null);
+    await clearLocalData();
   }, []);
 
   const value = useMemo(() => ({ loading, user, signIn, signOut }), [loading, user, signIn, signOut]);

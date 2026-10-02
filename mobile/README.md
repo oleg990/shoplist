@@ -24,7 +24,8 @@ npm run export:web  # сборка бандла, ловит ошибки имп�
 ## Структура
 
 - `app/` — экраны (expo-router): `(auth)/login`, `(auth)/code`, `(app)/index` (списки), `(app)/list/[id]` (позиции), `(app)/list/[id]/members`.
-- `src/items/` — хук `useListItems` (оптимистичные правки, лента изменений `?since`), слияние `merge.ts`, подсказки каталога.
+- `src/sync/` — офлайн-движок, SQLite-хранилище и WebSocket, описание в `docs/mobile-sync.md`.
+- `src/items/` — хук `useListItems` (читает локальное состояние), слияние `merge.ts`, подсказки каталога.
 - `src/api/` — HTTP-клиент: подставляет токен, при 401 один раз обновляет его (параллельные запросы делят один refresh, т. к. refresh-токены одноразовые).
 - `src/api/secureSession.ts` — токены в Keychain/Keystore через expo-secure-store.
 - `src/auth/` — состояние входа; сохранённая сессия работает без сети.
