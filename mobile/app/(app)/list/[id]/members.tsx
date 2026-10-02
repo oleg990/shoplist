@@ -2,11 +2,11 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Platform, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { listsApi, type Member, type ShopList } from '../../../src/api/lists';
-import { useAuth } from '../../../src/auth/AuthContext';
-import { errorMessage } from '../../../src/errors';
-import { Button } from '../../../src/ui/Button';
-import { colors } from '../../../src/ui/theme';
+import { listsApi, type Member, type ShopList } from '../../../../src/api/lists';
+import { useAuth } from '../../../../src/auth/AuthContext';
+import { errorMessage } from '../../../../src/errors';
+import { Button } from '../../../../src/ui/Button';
+import { colors } from '../../../../src/ui/theme';
 
 // Alert.alert на web не показывает кнопки, поэтому там спрашиваем через confirm.
 function confirm(title: string, message: string, action: string, onYes: () => void) {
@@ -92,10 +92,9 @@ export default function ListScreen() {
 
   return (
     <SafeAreaView style={styles.safe} edges={['bottom']}>
-      <Stack.Screen options={{ title: list?.title ?? 'Список' }} />
+      <Stack.Screen options={{ title: 'Участники' }} />
       <ScrollView contentContainerStyle={styles.content}>
         {error ? <Text style={styles.error}>{error}</Text> : null}
-        <Text style={styles.muted}>Позиции списка появятся в следующем обновлении.</Text>
 
         {isOwner ? (
           <View style={styles.row}>
