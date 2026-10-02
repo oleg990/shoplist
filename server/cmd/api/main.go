@@ -16,6 +16,7 @@ import (
 	"shoplist/server/internal/httpapi"
 	"shoplist/server/internal/items"
 	"shoplist/server/internal/lists"
+	"shoplist/server/internal/push"
 	"shoplist/server/internal/realtime"
 	"shoplist/server/internal/store"
 )
@@ -56,9 +57,12 @@ func run(log *slog.Logger) error {
 	}
 	authSvc := auth.NewService(pool, mailer, cfg.JWTSecret)
 
+	pushSvc := push.NewService(pool, push.ExpoSender{URL: cfg.ExpoPushURL, AccessToken: cfg.ExpoAccessToken}, 20*time.Second, log)
+	defer pushSvc.Close()
+
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpapi.NewRouter(pool, store.New(pool), authSvc, lists.NewService(pool), items.NewService(pool), hub, log),
+		Handler:           httpapi.NewRouter(pool, store.New(pool), authSvc, lists.NewService(pool), items.NewService(pool, pushSvc), hub, pushSvc, log),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

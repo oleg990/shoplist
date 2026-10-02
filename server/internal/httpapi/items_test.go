@@ -41,14 +41,15 @@ type listEnv struct {
 	listID       string
 	mailer       *captureMailer
 	pool         *pgxpool.Pool
+	expo         *fakeExpo
 }
 
 func newListEnv(t *testing.T) listEnv {
 	t.Helper()
-	srv, mailer, pool := newTestEnv(t)
-	e := listEnv{srv: srv.URL, mailer: mailer, pool: pool}
-	e.owner = login(t, e.srv, mailer, uniqueEmail())
-	e.guest = login(t, e.srv, mailer, uniqueEmail())
+	env := buildEnv(t, 0)
+	e := listEnv{srv: env.srv.URL, mailer: env.mailer, pool: env.pool, expo: env.expo}
+	e.owner = login(t, e.srv, e.mailer, uniqueEmail())
+	e.guest = login(t, e.srv, e.mailer, uniqueEmail())
 	l := mustCreateList(t, e.srv, e.owner, "Продукты")
 	e.listID = l.ID
 	inv := mustInvite(t, e.srv, e.owner, l.ID, nil)

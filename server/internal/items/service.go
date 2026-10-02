@@ -104,13 +104,20 @@ type Patch struct {
 	IsBought   Optional[bool]    `json:"is_bought"`
 }
 
-type Service struct {
-	pool *pgxpool.Pool
-	q    *store.Queries
+// Notifier получает события о позициях после коммита (push-уведомления). Может быть nil.
+type Notifier interface {
+	ItemAdded(listID, actorID uuid.UUID, itemName string)
+	ListCompleted(ctx context.Context, listID, actorID uuid.UUID)
 }
 
-func NewService(pool *pgxpool.Pool) *Service {
-	return &Service{pool: pool, q: store.New(pool)}
+type Service struct {
+	pool     *pgxpool.Pool
+	q        *store.Queries
+	notifier Notifier
+}
+
+func NewService(pool *pgxpool.Pool, notifier Notifier) *Service {
+	return &Service{pool: pool, q: store.New(pool), notifier: notifier}
 }
 
 // List возвращает позиции списка. С since > 0 отдаёт только изменения новее этой версии, включая удалённые.
@@ -137,8 +144,22 @@ func (s *Service) Put(ctx context.Context, userID, listID, itemID uuid.UUID, in 
 	if err := in.validate(); err != nil {
 		return Item{}, err
 	}
-	var item Item
+	var (
+		item             Item
+		created, allDone bool
+	)
 	err := s.inListTx(ctx, userID, listID, func(q *store.Queries, version int64) error {
+		exists, err := q.ItemExists(ctx, itemID)
+		if err != nil {
+			return err
+		}
+		created = !exists
+		prevBought := false
+		if exists {
+			if prevBought, err = q.ItemIsBought(ctx, store.ItemIsBoughtParams{ID: itemID, ListID: listID}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+		}
 		row, err := q.UpsertItem(ctx, store.UpsertItemParams{
 			ID: itemID, ListID: listID,
 			CatalogItemID: int4(in.CatalogItemID), Name: strings.TrimSpace(in.Name),
@@ -152,17 +173,43 @@ func (s *Service) Put(ctx context.Context, userID, listID, itemID uuid.UUID, in 
 			return mapFK(err)
 		}
 		item = toItem(store.ListItemsRow(row))
-		return nil
+		if item.IsBought && !prevBought {
+			allDone, err = allBought(ctx, q, listID)
+		}
+		return err
 	})
+	if err == nil && s.notifier != nil {
+		if created {
+			s.notifier.ItemAdded(listID, userID, item.Name)
+		}
+		if allDone {
+			s.notifier.ListCompleted(ctx, listID, userID)
+		}
+	}
 	return item, err
+}
+
+// allBought: в списке не осталось неотмеченных позиций.
+func allBought(ctx context.Context, q *store.Queries, listID uuid.UUID) (bool, error) {
+	n, err := q.CountUnboughtItems(ctx, listID)
+	return n == 0, err
 }
 
 func (s *Service) Patch(ctx context.Context, userID, listID, itemID uuid.UUID, p Patch) (Item, error) {
 	if err := p.validate(); err != nil {
 		return Item{}, err
 	}
-	var item Item
+	var (
+		item    Item
+		allDone bool
+	)
 	err := s.inListTx(ctx, userID, listID, func(q *store.Queries, version int64) error {
+		prevBought, err := q.ItemIsBought(ctx, store.ItemIsBoughtParams{ID: itemID, ListID: listID})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
 		args := store.PatchItemParams{ID: itemID, ListID: listID, Actor: userID, Version: version}
 		if p.Name.Set {
 			args.SetName, args.Name = true, strings.TrimSpace(*p.Name.Value)
@@ -192,8 +239,14 @@ func (s *Service) Patch(ctx context.Context, userID, listID, itemID uuid.UUID, p
 			return mapFK(err)
 		}
 		item = toItem(store.ListItemsRow(row))
-		return nil
+		if item.IsBought && !prevBought {
+			allDone, err = allBought(ctx, q, listID)
+		}
+		return err
 	})
+	if err == nil && allDone && s.notifier != nil {
+		s.notifier.ListCompleted(ctx, listID, userID)
+	}
 	return item, err
 }
 

@@ -15,6 +15,9 @@ type Config struct {
 	// Env: "development" (по умолчанию) или "production". В production обязателен SMTP.
 	Env  string
 	SMTP SMTP
+	// ExpoAccessToken нужен, только если в проекте Expo включена защита push-токенов; ExpoPushURL менять не требуется.
+	ExpoAccessToken string
+	ExpoPushURL     string
 }
 
 // SMTP настройки отправки писем с кодами. Пустой Host означает «не настроено».
@@ -28,6 +31,8 @@ func Load() (Config, error) {
 		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		ShutdownTimeout: 10 * time.Second,
 		JWTSecret:       os.Getenv("JWT_SECRET"),
+		ExpoAccessToken: os.Getenv("EXPO_ACCESS_TOKEN"),
+		ExpoPushURL:     os.Getenv("EXPO_PUSH_URL"),
 		Env:             getenv("APP_ENV", "development"),
 		SMTP: SMTP{
 			Host:     os.Getenv("SMTP_HOST"),
