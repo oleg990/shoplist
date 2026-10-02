@@ -16,6 +16,7 @@ import (
 	"shoplist/server/internal/auth"
 	"shoplist/server/internal/items"
 	"shoplist/server/internal/lists"
+	"shoplist/server/internal/realtime"
 	"shoplist/server/internal/store"
 )
 
@@ -30,51 +31,58 @@ type API struct {
 	auth    *auth.Service
 	lists   *lists.Service
 	items   *items.Service
+	hub     *realtime.Hub
 	log     *slog.Logger
 }
 
-func NewRouter(db Pinger, queries *store.Queries, authSvc *auth.Service, listsSvc *lists.Service, itemsSvc *items.Service, log *slog.Logger) http.Handler {
-	a := &API{db: db, queries: queries, auth: authSvc, lists: listsSvc, items: itemsSvc, log: log}
+func NewRouter(db Pinger, queries *store.Queries, authSvc *auth.Service, listsSvc *lists.Service, itemsSvc *items.Service, hub *realtime.Hub, log *slog.Logger) http.Handler {
+	a := &API{db: db, queries: queries, auth: authSvc, lists: listsSvc, items: itemsSvc, hub: hub, log: log}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(15 * time.Second))
 
-	r.Get("/healthz", a.health)
-	r.Route("/api/v1", func(r chi.Router) {
-		r.Get("/catalog/search", a.searchCatalog)
-		r.Get("/categories", a.listCategories)
+	// WebSocket живёт долго, поэтому таймаут запроса применяется только к обычным маршрутам.
+	r.Get("/api/v1/ws", a.ws)
 
-		r.Post("/auth/request-code", a.requestCode)
-		r.Post("/auth/verify", a.verifyCode)
-		r.Post("/auth/refresh", a.refresh)
-		r.Post("/auth/logout", a.logout)
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.Timeout(15 * time.Second))
 
-		r.Group(func(r chi.Router) {
-			r.Use(a.requireAuth)
-			r.Get("/me", a.me)
-			r.Patch("/me", a.updateMe)
-			r.Delete("/me", a.deleteMe)
+		r.Get("/healthz", a.health)
+		r.Route("/api/v1", func(r chi.Router) {
+			r.Get("/catalog/search", a.searchCatalog)
+			r.Get("/categories", a.listCategories)
 
-			r.Post("/lists", a.createList)
-			r.Get("/lists", a.listLists)
-			r.Route("/lists/{listID}", func(r chi.Router) {
-				r.Get("/", a.getList)
-				r.Patch("/", a.renameList)
-				r.Delete("/", a.deleteList)
-				r.Get("/members", a.listMembers)
-				r.Delete("/members/{userID}", a.removeMember)
-				r.Post("/invites", a.createInvite)
+			r.Post("/auth/request-code", a.requestCode)
+			r.Post("/auth/verify", a.verifyCode)
+			r.Post("/auth/refresh", a.refresh)
+			r.Post("/auth/logout", a.logout)
 
-				r.Get("/items", a.listItems)
-				r.Post("/items/clear-bought", a.clearBought)
-				r.Put("/items/{itemID}", a.putItem)
-				r.Patch("/items/{itemID}", a.patchItem)
-				r.Delete("/items/{itemID}", a.deleteItem)
+			r.Group(func(r chi.Router) {
+				r.Use(a.requireAuth)
+				r.Get("/me", a.me)
+				r.Patch("/me", a.updateMe)
+				r.Delete("/me", a.deleteMe)
+
+				r.Post("/lists", a.createList)
+				r.Get("/lists", a.listLists)
+				r.Route("/lists/{listID}", func(r chi.Router) {
+					r.Get("/", a.getList)
+					r.Patch("/", a.renameList)
+					r.Delete("/", a.deleteList)
+					r.Get("/members", a.listMembers)
+					r.Delete("/members/{userID}", a.removeMember)
+					r.Post("/invites", a.createInvite)
+
+					r.Get("/items", a.listItems)
+					r.Post("/items/clear-bought", a.clearBought)
+					r.Put("/items/{itemID}", a.putItem)
+					r.Patch("/items/{itemID}", a.patchItem)
+					r.Delete("/items/{itemID}", a.deleteItem)
+				})
+				r.Post("/invites/accept", a.acceptInvite)
 			})
-			r.Post("/invites/accept", a.acceptInvite)
 		})
 	})
 	return r

@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"shoplist/server/internal/realtime"
 	"shoplist/server/internal/store"
 )
 
@@ -242,6 +243,10 @@ func (s *Service) inListTx(ctx context.Context, userID, listID uuid.UUID, fn fun
 		return err
 	}
 	if err := fn(q, version); err != nil {
+		return err
+	}
+	// В транзакции: уведомление уйдёт только после коммита, строго в порядке версий.
+	if err := realtime.Notify(ctx, q, realtime.Event{ListID: listID, Kind: realtime.KindItems, Version: version}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

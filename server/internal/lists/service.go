@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"shoplist/server/internal/realtime"
 	"shoplist/server/internal/store"
 )
 
@@ -102,6 +103,10 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, title string) (L
 	if err := q.AddListMember(ctx, store.AddListMemberParams{ListID: l.ID, UserID: userID, Role: RoleOwner}); err != nil {
 		return List{}, err
 	}
+	// Другие устройства создателя узнают о новом списке.
+	if err := realtime.Notify(ctx, q, realtime.Event{ListID: l.ID, Kind: realtime.KindList}); err != nil {
+		return List{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return List{}, err
 	}
@@ -160,6 +165,7 @@ func (s *Service) Rename(ctx context.Context, userID, listID uuid.UUID, title st
 	if err := s.q.RenameList(ctx, store.RenameListParams{ID: listID, Title: title}); err != nil {
 		return List{}, err
 	}
+	s.notify(ctx, realtime.Event{ListID: listID, Kind: realtime.KindList})
 	return s.Get(ctx, userID, listID)
 }
 
@@ -167,7 +173,17 @@ func (s *Service) Delete(ctx context.Context, userID, listID uuid.UUID) error {
 	if _, err := s.requireOwner(ctx, userID, listID); err != nil {
 		return err
 	}
-	return s.q.SoftDeleteList(ctx, listID)
+	if err := s.q.SoftDeleteList(ctx, listID); err != nil {
+		return err
+	}
+	s.notify(ctx, realtime.Event{ListID: listID, Kind: realtime.KindList})
+	return nil
+}
+
+// notify отправляет уведомление после уже выполненной записи. Ошибка не мешает операции:
+// клиенты всё равно догонят изменения при следующем запросе.
+func (s *Service) notify(ctx context.Context, ev realtime.Event) {
+	_ = realtime.Notify(ctx, s.q, ev)
 }
 
 func (s *Service) Members(ctx context.Context, userID, listID uuid.UUID) ([]Member, error) {
@@ -208,7 +224,12 @@ func (s *Service) RemoveMember(ctx context.Context, actorID, listID, targetID uu
 	if n == 0 {
 		return ErrNotFound
 	}
-	return s.q.TouchList(ctx, listID)
+	if err := s.q.TouchList(ctx, listID); err != nil {
+		return err
+	}
+	// Убранный участник уже не в списке, но должен узнать об этом.
+	s.notify(ctx, realtime.Event{ListID: listID, Kind: realtime.KindMembers, AlsoUser: &targetID})
+	return nil
 }
 
 // CreateInvite: приглашать может любой участник списка.
@@ -282,6 +303,9 @@ func (s *Service) AcceptInvite(ctx context.Context, userID uuid.UUID, code strin
 			return List{}, err
 		}
 		if err := q.TouchList(ctx, inv.ListID); err != nil {
+			return List{}, err
+		}
+		if err := realtime.Notify(ctx, q, realtime.Event{ListID: inv.ListID, Kind: realtime.KindMembers}); err != nil {
 			return List{}, err
 		}
 	}

@@ -164,6 +164,14 @@ paths:
       responses:
         "204": { description: Аккаунт удалён }
         "401": { description: Нет или недействителен access-токен }
+  /api/v1/ws:
+    get:
+      summary: WebSocket с уведомлениями об изменениях (описание протокола в docs/realtime.md)
+      description: >
+        Первым сообщением клиент присылает {"type":"auth","token":"<access_token>"}, сервер отвечает {"type":"ready"}
+        и дальше присылает list_changed (с полями list_id, kind и version) и resync. При истёкшем токене соединение закрывается с кодом 4401.
+      responses:
+        "101": { description: Протокол переключён на WebSocket }
   /api/v1/lists:
     get:
       summary: Списки, в которых состоит пользователь (свежие сверху)

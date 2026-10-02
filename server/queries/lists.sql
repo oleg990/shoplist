@@ -66,3 +66,6 @@ SELECT EXISTS (
     SELECT 1 FROM list_members lm JOIN lists l ON l.id = lm.list_id AND l.deleted_at IS NULL
     WHERE lm.list_id = $1 AND lm.user_id = $2
 );
+
+-- name: ListMemberIDs :many
+SELECT user_id FROM list_members WHERE list_id = $1;
