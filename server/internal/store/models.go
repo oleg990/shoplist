@@ -57,10 +57,10 @@ type Item struct {
 	Price         pgtype.Numeric     `json:"price"`
 	CategoryID    pgtype.Int4        `json:"category_id"`
 	IsBought      bool               `json:"is_bought"`
-	BoughtBy      pgtype.UUID        `json:"bought_by"`
+	BoughtBy      uuid.NullUUID      `json:"bought_by"`
 	BoughtAt      pgtype.Timestamptz `json:"bought_at"`
 	Position      int32              `json:"position"`
-	CreatedBy     pgtype.UUID        `json:"created_by"`
+	CreatedBy     uuid.NullUUID      `json:"created_by"`
 	Version       int64              `json:"version"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt     pgtype.Timestamptz `json:"deleted_at"`
@@ -73,6 +73,7 @@ type List struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
+	ItemSeq   int64              `json:"item_seq"`
 }
 
 type ListMember struct {
@@ -98,7 +99,7 @@ type PurchaseHistory struct {
 	Quantity pgtype.Numeric     `json:"quantity"`
 	Unit     pgtype.Text        `json:"unit"`
 	Price    pgtype.Numeric     `json:"price"`
-	BoughtBy pgtype.UUID        `json:"bought_by"`
+	BoughtBy uuid.NullUUID      `json:"bought_by"`
 	BoughtAt pgtype.Timestamptz `json:"bought_at"`
 }
 

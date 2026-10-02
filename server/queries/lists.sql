@@ -60,3 +60,9 @@ FOR UPDATE OF i;
 
 -- name: IncrementInviteUses :exec
 UPDATE invites SET uses = uses + 1 WHERE id = $1;
+
+-- name: IsActiveListMember :one
+SELECT EXISTS (
+    SELECT 1 FROM list_members lm JOIN lists l ON l.id = lm.list_id AND l.deleted_at IS NULL
+    WHERE lm.list_id = $1 AND lm.user_id = $2
+);
