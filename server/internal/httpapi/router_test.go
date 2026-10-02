@@ -19,6 +19,7 @@ import (
 	"shoplist/server/internal/httpapi"
 	"shoplist/server/internal/items"
 	"shoplist/server/internal/lists"
+	"shoplist/server/internal/push"
 	"shoplist/server/internal/realtime"
 	"shoplist/server/internal/store"
 )
@@ -49,13 +50,31 @@ func (m *captureMailer) code(email string) string {
 	return m.codes[email]
 }
 
-func newTestEnv(t *testing.T) (*httptest.Server, *captureMailer, *pgxpool.Pool) {
-	t.Helper()
-	return newTestEnvTTL(t, 0)
+// testEnv: сервер со всеми зависимостями. Expo подменён локальным сервером, письма перехватываются.
+type testEnv struct {
+	srv    *httptest.Server
+	mailer *captureMailer
+	pool   *pgxpool.Pool
+	expo   *fakeExpo
 }
 
-// newTestEnvTTL позволяет задать срок жизни access-токена (0 оставляет значение по умолчанию).
+func newTestEnv(t *testing.T) (*httptest.Server, *captureMailer, *pgxpool.Pool) {
+	t.Helper()
+	e := buildEnv(t, 0)
+	return e.srv, e.mailer, e.pool
+}
+
+// newTestEnvTTL позволяет задать срок жизни access-токена.
 func newTestEnvTTL(t *testing.T, accessTTL time.Duration) (*httptest.Server, *captureMailer, *pgxpool.Pool) {
+	t.Helper()
+	e := buildEnv(t, accessTTL)
+	return e.srv, e.mailer, e.pool
+}
+
+// pushWindow — на сколько в тестах откладывается отправка о добавленных позициях.
+const pushWindow = 150 * time.Millisecond
+
+func buildEnv(t *testing.T, accessTTL time.Duration) testEnv {
 	t.Helper()
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
@@ -85,9 +104,12 @@ func newTestEnvTTL(t *testing.T, accessTTL time.Duration) (*httptest.Server, *ca
 	if accessTTL > 0 {
 		authSvc.SetAccessTTL(accessTTL)
 	}
-	srv := httptest.NewServer(httpapi.NewRouter(pool, store.New(pool), authSvc, lists.NewService(pool), items.NewService(pool), hub, log))
+	expo := newFakeExpo(t)
+	pushSvc := push.NewService(pool, push.ExpoSender{URL: expo.URL}, pushWindow, log)
+	t.Cleanup(pushSvc.Close)
+	srv := httptest.NewServer(httpapi.NewRouter(pool, store.New(pool), authSvc, lists.NewService(pool), items.NewService(pool, pushSvc), hub, pushSvc, log))
 	t.Cleanup(srv.Close)
-	return srv, mailer, pool
+	return testEnv{srv: srv, mailer: mailer, pool: pool, expo: expo}
 }
 
 func get(t *testing.T, url string, out any) int {

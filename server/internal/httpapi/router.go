@@ -16,6 +16,7 @@ import (
 	"shoplist/server/internal/auth"
 	"shoplist/server/internal/items"
 	"shoplist/server/internal/lists"
+	"shoplist/server/internal/push"
 	"shoplist/server/internal/realtime"
 	"shoplist/server/internal/store"
 )
@@ -32,11 +33,12 @@ type API struct {
 	lists   *lists.Service
 	items   *items.Service
 	hub     *realtime.Hub
+	push    *push.Service
 	log     *slog.Logger
 }
 
-func NewRouter(db Pinger, queries *store.Queries, authSvc *auth.Service, listsSvc *lists.Service, itemsSvc *items.Service, hub *realtime.Hub, log *slog.Logger) http.Handler {
-	a := &API{db: db, queries: queries, auth: authSvc, lists: listsSvc, items: itemsSvc, hub: hub, log: log}
+func NewRouter(db Pinger, queries *store.Queries, authSvc *auth.Service, listsSvc *lists.Service, itemsSvc *items.Service, hub *realtime.Hub, pushSvc *push.Service, log *slog.Logger) http.Handler {
+	a := &API{db: db, queries: queries, auth: authSvc, lists: listsSvc, items: itemsSvc, hub: hub, push: pushSvc, log: log}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -64,6 +66,9 @@ func NewRouter(db Pinger, queries *store.Queries, authSvc *auth.Service, listsSv
 				r.Get("/me", a.me)
 				r.Patch("/me", a.updateMe)
 				r.Delete("/me", a.deleteMe)
+
+				r.Put("/devices", a.registerDevice)
+				r.Delete("/devices", a.unregisterDevice)
 
 				r.Post("/lists", a.createList)
 				r.Get("/lists", a.listLists)

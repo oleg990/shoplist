@@ -164,6 +164,42 @@ paths:
       responses:
         "204": { description: Аккаунт удалён }
         "401": { description: Нет или недействителен access-токен }
+  /api/v1/devices:
+    put:
+      summary: Зарегистрировать устройство для push-уведомлений
+      description: >
+        Вызывать после входа и при каждом запуске приложения, повтор безопасен. Токен, ранее принадлежавший
+        другому пользователю, переписывается на текущего. У пользователя хранится не больше 20 устройств.
+        Описание уведомлений в docs/push.md.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expo_push_token, platform]
+              properties:
+                expo_push_token: { type: string, example: "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]" }
+                platform: { type: string, enum: [android, ios] }
+      responses:
+        "204": { description: Готово }
+        "400": { description: Некорректный токен или платформа }
+        "401": { description: Нет или недействителен access-токен }
+    delete:
+      summary: Удалить устройство (перед выходом из аккаунта)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expo_push_token]
+              properties:
+                expo_push_token: { type: string }
+      responses:
+        "204": { description: Готово, повторный вызов безопасен }
   /api/v1/ws:
     get:
       summary: WebSocket с уведомлениями об изменениях (описание протокола в docs/realtime.md)
