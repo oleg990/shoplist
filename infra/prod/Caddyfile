@@ -1,0 +1,11 @@
+# HTTPS-сертификат Let's Encrypt Caddy получает и продлевает сам.
+# Нужно, чтобы DOMAIN указывал на IP сервера, а порты 80 и 443 были открыты.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+	# WebSocket (/api/v1/ws) проходит через тот же reverse_proxy.
+	reverse_proxy server:8080
+}
