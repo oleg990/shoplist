@@ -1,3 +1,4 @@
+import type { ApiClient } from './client';
 import { api } from './index';
 
 export const UNITS = [
@@ -52,18 +53,20 @@ export type CatalogItem = {
   default_unit: string | null;
 };
 
-export const itemsApi = {
+export const makeItemsApi = (api: ApiClient) => ({
   changes: (listId: string, since: number) =>
     api.request<{ items: Item[]; cursor: number }>('GET', `/api/v1/lists/${listId}/items?since=${since}`),
   put: (listId: string, id: string, input: ItemInput) => api.request<Item>('PUT', `/api/v1/lists/${listId}/items/${id}`, input),
   patch: (listId: string, id: string, patch: ItemPatch) => api.request<Item>('PATCH', `/api/v1/lists/${listId}/items/${id}`, patch),
   remove: (listId: string, id: string) => api.request<void>('DELETE', `/api/v1/lists/${listId}/items/${id}`),
   clearBought: (listId: string) => api.request<{ cleared: number }>('POST', `/api/v1/lists/${listId}/items/clear-bought`),
-};
+});
+export const itemsApi = makeItemsApi(api);
 
-export const catalogApi = {
+export const makeCatalogApi = (api: ApiClient) => ({
   search: (q: string, limit = 8) =>
     api
       .request<{ items: CatalogItem[] }>('GET', `/api/v1/catalog/search?q=${encodeURIComponent(q)}&limit=${limit}`, undefined, false)
       .then((r) => r.items),
-};
+});
+export const catalogApi = makeCatalogApi(api);

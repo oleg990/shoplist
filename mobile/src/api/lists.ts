@@ -1,3 +1,4 @@
+import type { ApiClient } from './client';
 import { api } from './index';
 
 export type ShopList = {
@@ -13,7 +14,7 @@ export type ShopList = {
 export type Member = { user_id: string; name: string; role: 'owner' | 'editor'; joined_at: string };
 export type Invite = { code: string; expires_at: string; max_uses: number; uses: number };
 
-export const listsApi = {
+export const makeListsApi = (api: ApiClient) => ({
   all: () => api.request<{ items: ShopList[] }>('GET', '/api/v1/lists').then((r) => r.items),
   get: (id: string) => api.request<ShopList>('GET', `/api/v1/lists/${id}`),
   create: (title: string) => api.request<ShopList>('POST', '/api/v1/lists', { title }),
@@ -23,4 +24,5 @@ export const listsApi = {
   removeMember: (id: string, userId: string) => api.request<void>('DELETE', `/api/v1/lists/${id}/members/${userId}`),
   invite: (id: string) => api.request<Invite>('POST', `/api/v1/lists/${id}/invites`),
   accept: (code: string) => api.request<ShopList>('POST', '/api/v1/invites/accept', { code: code.trim() }),
-};
+});
+export const listsApi = makeListsApi(api);
