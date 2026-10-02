@@ -185,6 +185,25 @@ func (q *Queries) IncrementInviteUses(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const isActiveListMember = `-- name: IsActiveListMember :one
+SELECT EXISTS (
+    SELECT 1 FROM list_members lm JOIN lists l ON l.id = lm.list_id AND l.deleted_at IS NULL
+    WHERE lm.list_id = $1 AND lm.user_id = $2
+)
+`
+
+type IsActiveListMemberParams struct {
+	ListID uuid.UUID `json:"list_id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+func (q *Queries) IsActiveListMember(ctx context.Context, arg IsActiveListMemberParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isActiveListMember, arg.ListID, arg.UserID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const isListMember = `-- name: IsListMember :one
 SELECT EXISTS (SELECT 1 FROM list_members WHERE list_id = $1 AND user_id = $2)
 `

@@ -14,6 +14,7 @@ import (
 	"shoplist/server/internal/config"
 	"shoplist/server/internal/db"
 	"shoplist/server/internal/httpapi"
+	"shoplist/server/internal/items"
 	"shoplist/server/internal/lists"
 	"shoplist/server/internal/store"
 )
@@ -53,7 +54,7 @@ func run(log *slog.Logger) error {
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpapi.NewRouter(pool, store.New(pool), authSvc, lists.NewService(pool), log),
+		Handler:           httpapi.NewRouter(pool, store.New(pool), authSvc, lists.NewService(pool), items.NewService(pool), log),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

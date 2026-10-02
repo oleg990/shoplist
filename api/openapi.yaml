@@ -314,6 +314,107 @@ paths:
               schema: { $ref: "#/components/schemas/List" }
         "404": { description: Код неверный, просрочен, исчерпан или список удалён }
         "409": { description: В списке уже максимум участников }
+  /api/v1/lists/{listID}/items:
+    parameters:
+        - { name: listID, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Позиции списка
+      description: >
+        Без since возвращает текущие (не удалённые) позиции. С since=N возвращает всё, что изменилось после версии N,
+        включая удалённые (deleted=true), чтобы клиент мог убрать их у себя. Значение cursor из ответа передаётся
+        как since в следующий запрос. Версии растут строго по порядку внутри списка.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: since, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+      responses:
+        "200":
+          description: Позиции и курсор
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Item" }
+                  cursor: { type: integer, format: int64 }
+        "400": { description: Некорректный since }
+        "404": { description: Нет такого списка или вы в нём не участвуете }
+  /api/v1/lists/{listID}/items/{itemID}:
+    parameters:
+        - { name: listID, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: itemID, in: path, required: true, schema: { type: string, format: uuid }, description: Id создаёт клиент }
+    put:
+      summary: Создать позицию или заменить её целиком (идемпотентно)
+      description: >
+        Подходит для офлайн-клиента: id генерируется на устройстве, повтор запроса безопасен.
+        Поля, которых нет в теле, очищаются. Может любой участник списка.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ItemInput" }
+      responses:
+        "200":
+          description: Позиция
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Item" }
+        "400": { description: Некорректные данные (название, количество, цена, неизвестная единица или категория) }
+        "404": { description: Нет такого списка }
+        "409": { description: Позиция с таким id уже есть в другом списке или была удалена }
+    patch:
+      summary: Изменить часть полей позиции
+      description: >
+        Меняются только поля, присутствующие в теле. null очищает quantity, unit, price и category_id.
+        is_bought=true запоминает, кто купил (повторная отметка другим человеком это не меняет), false очищает.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                quantity: { type: number, nullable: true }
+                unit: { type: string, nullable: true }
+                price: { type: number, nullable: true }
+                category_id: { type: integer, nullable: true }
+                position: { type: integer }
+                is_bought: { type: boolean }
+      responses:
+        "200":
+          description: Обновлённая позиция
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Item" }
+        "400": { description: Некорректные данные }
+        "404": { description: Нет такого списка или позиции }
+    delete:
+      summary: Удалить позицию
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Удалена }
+        "404": { description: Нет такого списка или позиции }
+  /api/v1/lists/{listID}/items/clear-bought:
+    parameters:
+        - { name: listID, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      summary: Очистить купленное
+      description: Купленные позиции убираются из списка и сохраняются в истории покупок. Другие клиенты увидят их как deleted.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Сколько позиций убрано
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  cleared: { type: integer }
+        "404": { description: Нет такого списка }
 components:
   securitySchemes:
     bearerAuth:
@@ -321,6 +422,36 @@ components:
       scheme: bearer
       bearerFormat: JWT
   schemas:
+    ItemInput:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        quantity: { type: number, nullable: true, description: "Больше 0, до 9999999" }
+        unit: { type: string, nullable: true, enum: [pcs, kg, g, l, ml, pack] }
+        price: { type: number, nullable: true, minimum: 0 }
+        category_id: { type: integer, nullable: true }
+        catalog_item_id: { type: integer, nullable: true, description: Ссылка на товар справочника }
+        position: { type: integer, minimum: 0, default: 0 }
+        is_bought: { type: boolean, default: false }
+    Item:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        list_id: { type: string, format: uuid }
+        name: { type: string }
+        quantity: { type: number, nullable: true }
+        unit: { type: string, nullable: true }
+        price: { type: number, nullable: true }
+        category_id: { type: integer, nullable: true }
+        catalog_item_id: { type: integer, nullable: true }
+        is_bought: { type: boolean }
+        bought_by: { type: string, format: uuid, nullable: true }
+        bought_at: { type: string, format: date-time, nullable: true }
+        position: { type: integer }
+        version: { type: integer, format: int64, description: Растёт при каждом изменении внутри списка }
+        updated_at: { type: string, format: date-time }
+        deleted: { type: boolean, description: true у удалённых позиций в ответе на since }
     List:
       type: object
       properties:
