@@ -18,9 +18,10 @@ if [ "${1:-}" = "now" ]; then
 fi
 
 while true; do
+	# Секунд до ближайших 03:00 UTC (арифметика по эпохе: не зависит от формата date в busybox).
 	now=$(date -u +%s)
-	next=$(date -u -d "03:00" +%s 2>/dev/null || echo 0)
-	[ "$next" -le "$now" ] && next=$((next + 86400))
-	sleep $((next - now))
+	wait=$(((10800 - now % 86400 + 86400) % 86400))
+	[ "$wait" -eq 0 ] && wait=86400
+	sleep "$wait"
 	dump || echo "backup FAILED" >&2
 done
