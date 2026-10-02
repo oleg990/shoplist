@@ -1,0 +1,71 @@
+openapi: 3.0.3
+info:
+  title: ShopList API
+  version: 0.1.0
+  description: Контракт API. Сейчас описан только справочник; остальное добавляется по мере реализации.
+servers:
+  - url: http://localhost:8080
+paths:
+  /healthz:
+    get:
+      summary: Проверка работоспособности (включая базу данных)
+      responses:
+        "200":
+          description: Всё работает
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+        "503":
+          description: База данных недоступна
+  /api/v1/catalog/search:
+    get:
+      summary: Поиск товара в общем справочнике (с учётом опечаток)
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string }, example: молоко }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+      responses:
+        "200":
+          description: Найденные товары
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/CatalogItem" }
+        "400":
+          description: Не указан q или некорректный limit
+  /api/v1/categories:
+    get:
+      summary: Категории товаров в порядке обхода магазина
+      responses:
+        "200":
+          description: Список категорий
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Category" }
+components:
+  schemas:
+    CatalogItem:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        category_id: { type: integer, nullable: true }
+        category_name: { type: string, nullable: true }
+        default_unit: { type: string, nullable: true }
+    Category:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        sort_order: { type: integer }
