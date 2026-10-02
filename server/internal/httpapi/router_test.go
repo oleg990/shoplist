@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -177,5 +178,25 @@ func TestListCategories(t *testing.T) {
 	}
 	if len(res.Items) != 12 {
 		t.Fatalf("categories = %d, want 12", len(res.Items))
+	}
+}
+
+// Входные эндпоинты ограничены по IP: после запаса запросов приходит 429 с Retry-After.
+func TestAuthEndpointsAreRateLimitedPerIP(t *testing.T) {
+	srv := newTestServer(t)
+	var got429 bool
+	for i := 0; i < 40; i++ {
+		resp, err := http.Post(srv.URL+"/api/v1/auth/verify", "application/json", strings.NewReader(`{"email":"nobody@example.com","code":"000000"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusTooManyRequests {
+			got429 = resp.Header.Get("Retry-After") != ""
+			break
+		}
+	}
+	if !got429 {
+		t.Fatal("expected 429 with Retry-After after a burst of auth requests")
 	}
 }
