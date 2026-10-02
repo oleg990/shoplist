@@ -1,0 +1,123 @@
+// Package httpapi содержит HTTP-роутер и обработчики API.
+package httpapi
+
+import (
+	"context"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+
+	"shoplist/server/internal/store"
+)
+
+// Pinger проверяет доступность базы данных.
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
+
+type API struct {
+	db      Pinger
+	queries *store.Queries
+	log     *slog.Logger
+}
+
+func NewRouter(db Pinger, queries *store.Queries, log *slog.Logger) http.Handler {
+	a := &API{db: db, queries: queries, log: log}
+
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.Timeout(15 * time.Second))
+
+	r.Get("/healthz", a.health)
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Get("/catalog/search", a.searchCatalog)
+		r.Get("/categories", a.listCategories)
+	})
+	return r
+}
+
+func (a *API) health(w http.ResponseWriter, r *http.Request) {
+	if err := a.db.Ping(r.Context()); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "db_unavailable"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+type catalogItem struct {
+	ID           int32   `json:"id"`
+	Name         string  `json:"name"`
+	CategoryID   *int32  `json:"category_id"`
+	CategoryName *string `json:"category_name"`
+	DefaultUnit  *string `json:"default_unit"`
+}
+
+func (a *API) searchCatalog(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		writeError(w, http.StatusBadRequest, "q is required")
+		return
+	}
+	limit := 20
+	if s := r.URL.Query().Get("limit"); s != "" {
+		n, err := strconv.Atoi(s)
+		if err != nil || n < 1 || n > 50 {
+			writeError(w, http.StatusBadRequest, "limit must be 1..50")
+			return
+		}
+		limit = n
+	}
+
+	rows, err := a.queries.SearchCatalog(r.Context(), store.SearchCatalogParams{Query: q, MaxResults: int32(limit)})
+	if err != nil {
+		a.log.Error("search catalog", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	items := make([]catalogItem, 0, len(rows))
+	for _, row := range rows {
+		it := catalogItem{ID: row.ID, Name: row.Name}
+		if row.CategoryID.Valid {
+			it.CategoryID = &row.CategoryID.Int32
+		}
+		if row.CategoryName.Valid {
+			it.CategoryName = &row.CategoryName.String
+		}
+		if row.DefaultUnit.Valid {
+			it.DefaultUnit = &row.DefaultUnit.String
+		}
+		items = append(items, it)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (a *API) listCategories(w http.ResponseWriter, r *http.Request) {
+	cats, err := a.queries.ListCategories(r.Context())
+	if err != nil {
+		a.log.Error("list categories", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if cats == nil {
+		cats = []store.Category{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": cats})
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
+}
