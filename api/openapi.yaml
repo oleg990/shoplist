@@ -2,7 +2,7 @@ openapi: 3.0.3
 info:
   title: ShopList API
   version: 0.1.0
-  description: Контракт API. Сейчас описан только справочник; остальное добавляется по мере реализации.
+  description: Контракт API. Описано то, что уже реализовано; остальное добавляется по мере реализации.
 servers:
   - url: http://localhost:8080
 paths:
@@ -53,8 +53,137 @@ paths:
                   items:
                     type: array
                     items: { $ref: "#/components/schemas/Category" }
+  /api/v1/auth/request-code:
+    post:
+      summary: Отправить код входа на email (аккаунт создаётся при первом входе)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        "204": { description: Код отправлен }
+        "400": { description: Некорректный email }
+        "429": { description: Код запрашивали меньше минуты назад (см. Retry-After) }
+  /api/v1/auth/verify:
+    post:
+      summary: Проверить код и получить токены
+      description: Код действует 10 минут, после 5 неверных попыток блокируется.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code]
+              properties:
+                email: { type: string, format: email }
+                code: { type: string, example: "123456" }
+      responses:
+        "200":
+          description: Токены
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tokens" }
+        "401": { description: Неверный или просроченный код }
+  /api/v1/auth/refresh:
+    post:
+      summary: Обменять refresh-токен на новую пару токенов
+      description: Refresh-токен одноразовый. Повторное использование старого отзывает все токены пользователя.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "200":
+          description: Новая пара токенов
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tokens" }
+        "401": { description: Токен недействителен }
+  /api/v1/auth/logout:
+    post:
+      summary: Выйти (отозвать refresh-токен)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        "204": { description: Готово }
+  /api/v1/me:
+    get:
+      summary: Текущий пользователь
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Профиль
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { description: Нет или недействителен access-токен }
+    patch:
+      summary: Изменить имя
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 50 }
+      responses:
+        "200":
+          description: Обновлённый профиль
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { description: Некорректное имя }
+        "401": { description: Нет или недействителен access-токен }
+    delete:
+      summary: Удалить аккаунт
+      description: >
+        Требование App Store и Google Play. Общие списки переходят самому раннему из остальных участников,
+        списки без других участников и остальные данные пользователя удаляются.
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: Аккаунт удалён }
+        "401": { description: Нет или недействителен access-токен }
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   schemas:
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        name: { type: string }
+    Tokens:
+      type: object
+      properties:
+        access_token: { type: string, description: JWT, живёт 15 минут }
+        refresh_token: { type: string, description: Одноразовый, живёт 90 дней }
+        expires_in: { type: integer, example: 900 }
+        user: { $ref: "#/components/schemas/User" }
     CatalogItem:
       type: object
       properties:

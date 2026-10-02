@@ -2,7 +2,7 @@
 
 Приложение «список покупок» для нескольких пользователей: общие списки, отметки «куплено», работа без сети, push-уведомления.
 
-Статус: каркас. Сервер отдаёт справочник товаров; остальное по [плану](docs/plan.md).
+Статус: ранняя разработка. Есть справочник товаров и вход по email-коду; остальное по [плану](docs/plan.md).
 
 ## Стек
 
@@ -18,6 +18,15 @@ make dev            # Postgres + сервер в Docker, http://localhost:8080
 curl localhost:8080/healthz
 curl "localhost:8080/api/v1/catalog/search?q=малоко"   # найдёт «Молоко», несмотря на опечатку
 ```
+
+В режиме разработки код входа не отправляется по почте, а пишется в лог сервера (`docker compose -f infra/docker-compose.yml logs server`):
+
+```bash
+curl -X POST localhost:8080/api/v1/auth/request-code -d '{"email":"me@example.com"}'
+curl -X POST localhost:8080/api/v1/auth/verify -d '{"email":"me@example.com","code":"<код из лога>"}'
+```
+
+Настройки сервера (JWT, SMTP) описаны в `.env.example`.
 
 Без Docker для сервера: `docker compose -f infra/docker-compose.yml up -d postgres`, затем `make run`.
 

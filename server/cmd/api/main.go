@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"shoplist/server/internal/auth"
 	"shoplist/server/internal/config"
 	"shoplist/server/internal/db"
 	"shoplist/server/internal/httpapi"
@@ -43,9 +44,15 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
+	var mailer auth.Mailer = auth.LogMailer{Log: log}
+	if cfg.SMTP.Host != "" {
+		mailer = auth.SMTPMailer{Host: cfg.SMTP.Host, Port: cfg.SMTP.Port, User: cfg.SMTP.User, Password: cfg.SMTP.Password, From: cfg.SMTP.From}
+	}
+	authSvc := auth.NewService(pool, mailer, cfg.JWTSecret)
+
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpapi.NewRouter(pool, store.New(pool), log),
+		Handler:           httpapi.NewRouter(pool, store.New(pool), authSvc, log),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

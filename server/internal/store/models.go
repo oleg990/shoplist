@@ -5,13 +5,14 @@
 package store
 
 import (
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type AuthIdentity struct {
-	UserID      pgtype.UUID `json:"user_id"`
-	Provider    string      `json:"provider"`
-	ProviderUid string      `json:"provider_uid"`
+	UserID      uuid.UUID `json:"user_id"`
+	Provider    string    `json:"provider"`
+	ProviderUid string    `json:"provider_uid"`
 }
 
 type CatalogItem struct {
@@ -29,26 +30,26 @@ type Category struct {
 }
 
 type Device struct {
-	ID            pgtype.UUID        `json:"id"`
-	UserID        pgtype.UUID        `json:"user_id"`
+	ID            uuid.UUID          `json:"id"`
+	UserID        uuid.UUID          `json:"user_id"`
 	ExpoPushToken string             `json:"expo_push_token"`
 	Platform      string             `json:"platform"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Invite struct {
-	ID        pgtype.UUID        `json:"id"`
-	ListID    pgtype.UUID        `json:"list_id"`
+	ID        uuid.UUID          `json:"id"`
+	ListID    uuid.UUID          `json:"list_id"`
 	Code      string             `json:"code"`
-	CreatedBy pgtype.UUID        `json:"created_by"`
+	CreatedBy uuid.UUID          `json:"created_by"`
 	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
 	MaxUses   int32              `json:"max_uses"`
 	Uses      int32              `json:"uses"`
 }
 
 type Item struct {
-	ID            pgtype.UUID        `json:"id"`
-	ListID        pgtype.UUID        `json:"list_id"`
+	ID            uuid.UUID          `json:"id"`
+	ListID        uuid.UUID          `json:"list_id"`
 	CatalogItemID pgtype.Int4        `json:"catalog_item_id"`
 	Name          string             `json:"name"`
 	Quantity      pgtype.Numeric     `json:"quantity"`
@@ -66,17 +67,17 @@ type Item struct {
 }
 
 type List struct {
-	ID        pgtype.UUID        `json:"id"`
+	ID        uuid.UUID          `json:"id"`
 	Title     string             `json:"title"`
-	OwnerID   pgtype.UUID        `json:"owner_id"`
+	OwnerID   uuid.UUID          `json:"owner_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
 }
 
 type ListMember struct {
-	ListID   pgtype.UUID        `json:"list_id"`
-	UserID   pgtype.UUID        `json:"user_id"`
+	ListID   uuid.UUID          `json:"list_id"`
+	UserID   uuid.UUID          `json:"user_id"`
 	Role     string             `json:"role"`
 	JoinedAt pgtype.Timestamptz `json:"joined_at"`
 }
@@ -92,7 +93,7 @@ type LoginCode struct {
 
 type PurchaseHistory struct {
 	ID       int64              `json:"id"`
-	ListID   pgtype.UUID        `json:"list_id"`
+	ListID   uuid.UUID          `json:"list_id"`
 	ItemName string             `json:"item_name"`
 	Quantity pgtype.Numeric     `json:"quantity"`
 	Unit     pgtype.Text        `json:"unit"`
@@ -102,8 +103,8 @@ type PurchaseHistory struct {
 }
 
 type RefreshToken struct {
-	ID        pgtype.UUID        `json:"id"`
-	UserID    pgtype.UUID        `json:"user_id"`
+	ID        uuid.UUID          `json:"id"`
+	UserID    uuid.UUID          `json:"user_id"`
 	TokenHash string             `json:"token_hash"`
 	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
 	RevokedAt pgtype.Timestamptz `json:"revoked_at"`
@@ -116,7 +117,7 @@ type Unit struct {
 }
 
 type User struct {
-	ID        pgtype.UUID        `json:"id"`
+	ID        uuid.UUID          `json:"id"`
 	Email     string             `json:"email"`
 	Name      string             `json:"name"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
