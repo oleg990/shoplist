@@ -8,6 +8,7 @@ type AuthState = {
   user: User | null;
   signIn: (email: string, code: string) => Promise<void>;
   signOut: () => Promise<void>;
+  deleteAccount: () => Promise<void>;
 };
 
 const Ctx = createContext<AuthState | null>(null);
@@ -45,7 +46,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await clearLocalData();
   }, []);
 
-  const value = useMemo(() => ({ loading, user, signIn, signOut }), [loading, user, signIn, signOut]);
+  // Удаляет аккаунт на сервере (списки, где есть другие участники, переходят им), затем выходит.
+  const deleteAccount = useCallback(async () => {
+    await unregisterPush();
+    await api.request('DELETE', '/api/v1/me');
+    await api.clearSession();
+    setUser(null);
+    await clearLocalData();
+  }, []);
+
+  const value = useMemo(() => ({ loading, user, signIn, signOut, deleteAccount }), [loading, user, signIn, signOut, deleteAccount]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
