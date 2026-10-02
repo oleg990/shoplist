@@ -10,6 +10,7 @@ import (
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -18,6 +19,7 @@ import (
 	"shoplist/server/internal/httpapi"
 	"shoplist/server/internal/items"
 	"shoplist/server/internal/lists"
+	"shoplist/server/internal/realtime"
 	"shoplist/server/internal/store"
 )
 
@@ -49,6 +51,12 @@ func (m *captureMailer) code(email string) string {
 
 func newTestEnv(t *testing.T) (*httptest.Server, *captureMailer, *pgxpool.Pool) {
 	t.Helper()
+	return newTestEnvTTL(t, 0)
+}
+
+// newTestEnvTTL позволяет задать срок жизни access-токена (0 оставляет значение по умолчанию).
+func newTestEnvTTL(t *testing.T, accessTTL time.Duration) (*httptest.Server, *captureMailer, *pgxpool.Pool) {
+	t.Helper()
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
 		t.Skip("TEST_DATABASE_URL is not set")
@@ -63,9 +71,21 @@ func newTestEnv(t *testing.T) (*httptest.Server, *captureMailer, *pgxpool.Pool) 
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	hubCtx, stopHub := context.WithCancel(context.Background())
+	hub := realtime.NewHub(pool, log)
+	go hub.Run(hubCtx)
+	t.Cleanup(stopHub)
+	select {
+	case <-hub.Ready():
+	case <-time.After(5 * time.Second):
+		t.Fatal("realtime hub did not start listening")
+	}
 	mailer := &captureMailer{codes: map[string]string{}}
 	authSvc := auth.NewService(pool, mailer, "test-secret-test-secret-test-secret-0123")
-	srv := httptest.NewServer(httpapi.NewRouter(pool, store.New(pool), authSvc, lists.NewService(pool), items.NewService(pool), log))
+	if accessTTL > 0 {
+		authSvc.SetAccessTTL(accessTTL)
+	}
+	srv := httptest.NewServer(httpapi.NewRouter(pool, store.New(pool), authSvc, lists.NewService(pool), items.NewService(pool), hub, log))
 	t.Cleanup(srv.Close)
 	return srv, mailer, pool
 }

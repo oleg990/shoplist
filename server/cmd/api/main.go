@@ -16,6 +16,7 @@ import (
 	"shoplist/server/internal/httpapi"
 	"shoplist/server/internal/items"
 	"shoplist/server/internal/lists"
+	"shoplist/server/internal/realtime"
 	"shoplist/server/internal/store"
 )
 
@@ -46,6 +47,9 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
+	hub := realtime.NewHub(pool, log)
+	go hub.Run(ctx)
+
 	var mailer auth.Mailer = auth.LogMailer{Log: log}
 	if cfg.SMTP.Host != "" {
 		mailer = auth.SMTPMailer{Host: cfg.SMTP.Host, Port: cfg.SMTP.Port, User: cfg.SMTP.User, Password: cfg.SMTP.Password, From: cfg.SMTP.From}
@@ -54,7 +58,7 @@ func run(log *slog.Logger) error {
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpapi.NewRouter(pool, store.New(pool), authSvc, lists.NewService(pool), items.NewService(pool), log),
+		Handler:           httpapi.NewRouter(pool, store.New(pool), authSvc, lists.NewService(pool), items.NewService(pool), hub, log),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

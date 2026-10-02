@@ -53,14 +53,15 @@ type Tokens struct {
 }
 
 type Service struct {
-	pool   *pgxpool.Pool
-	q      *store.Queries
-	mailer Mailer
-	secret []byte
+	pool      *pgxpool.Pool
+	q         *store.Queries
+	mailer    Mailer
+	secret    []byte
+	accessTTL time.Duration
 }
 
 func NewService(pool *pgxpool.Pool, mailer Mailer, secret string) *Service {
-	return &Service{pool: pool, q: store.New(pool), mailer: mailer, secret: []byte(secret)}
+	return &Service{pool: pool, q: store.New(pool), mailer: mailer, secret: []byte(secret), accessTTL: AccessTokenTTL}
 }
 
 // NormalizeEmail проверяет адрес и приводит его к нижнему регистру.
@@ -208,19 +209,28 @@ func (s *Service) Logout(ctx context.Context, refreshToken string) error {
 	return s.q.RevokeRefreshTokenByHash(ctx, hashToken(refreshToken))
 }
 
+// SetAccessTTL меняет срок жизни access-токена (нужно тестам).
+func (s *Service) SetAccessTTL(d time.Duration) { s.accessTTL = d }
+
 // ParseAccessToken возвращает id пользователя из access-токена.
 func (s *Service) ParseAccessToken(token string) (uuid.UUID, error) {
+	id, _, err := s.ParseAccessTokenExp(token)
+	return id, err
+}
+
+// ParseAccessTokenExp возвращает id пользователя и момент, когда токен перестанет действовать.
+func (s *Service) ParseAccessTokenExp(token string) (uuid.UUID, time.Time, error) {
 	claims := jwt.RegisteredClaims{}
 	_, err := jwt.ParseWithClaims(token, &claims, func(*jwt.Token) (any, error) { return s.secret, nil },
 		jwt.WithValidMethods([]string{"HS256"}), jwt.WithExpirationRequired())
 	if err != nil {
-		return uuid.Nil, ErrInvalidToken
+		return uuid.Nil, time.Time{}, ErrInvalidToken
 	}
 	id, err := uuid.Parse(claims.Subject)
-	if err != nil {
-		return uuid.Nil, ErrInvalidToken
+	if err != nil || claims.ExpiresAt == nil {
+		return uuid.Nil, time.Time{}, ErrInvalidToken
 	}
-	return id, nil
+	return id, claims.ExpiresAt.Time, nil
 }
 
 func (s *Service) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
@@ -263,7 +273,7 @@ func (s *Service) issue(ctx context.Context, q *store.Queries, u User) (Tokens, 
 	access, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
 		Subject:   u.ID.String(),
 		IssuedAt:  jwt.NewNumericDate(now),
-		ExpiresAt: jwt.NewNumericDate(now.Add(AccessTokenTTL)),
+		ExpiresAt: jwt.NewNumericDate(now.Add(s.accessTTL)),
 	}).SignedString(s.secret)
 	if err != nil {
 		return Tokens{}, err
@@ -281,7 +291,7 @@ func (s *Service) issue(ctx context.Context, q *store.Queries, u User) (Tokens, 
 	}); err != nil {
 		return Tokens{}, err
 	}
-	return Tokens{AccessToken: access, RefreshToken: refresh, ExpiresIn: int(AccessTokenTTL.Seconds()), User: u}, nil
+	return Tokens{AccessToken: access, RefreshToken: refresh, ExpiresIn: int(s.accessTTL.Seconds()), User: u}, nil
 }
 
 func newCode() (string, error) {

@@ -267,6 +267,30 @@ func (q *Queries) ListListsForUser(ctx context.Context, userID uuid.UUID) ([]Lis
 	return items, nil
 }
 
+const listMemberIDs = `-- name: ListMemberIDs :many
+SELECT user_id FROM list_members WHERE list_id = $1
+`
+
+func (q *Queries) ListMemberIDs(ctx context.Context, listID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listMemberIDs, listID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var user_id uuid.UUID
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMembers = `-- name: ListMembers :many
 SELECT u.id AS user_id, u.name, u.email, lm.role, lm.joined_at
 FROM list_members lm
