@@ -1,11 +1,13 @@
-import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useRouter } from 'expo-router';
+import { useState } from 'react';
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { listsApi, type ShopList } from '../../src/api/lists';
+import { listsApi } from '../../src/api/lists';
 import { useAuth } from '../../src/auth/AuthContext';
 import { errorMessage } from '../../src/errors';
 import { Button } from '../../src/ui/Button';
+import { useLists, useSyncStatus } from '../../src/sync/hooks';
+import { useSyncEngine } from '../../src/sync/SyncProvider';
 import { colors } from '../../src/ui/theme';
 
 function members(n: number) {
@@ -18,35 +20,19 @@ function members(n: number) {
 export default function Lists() {
   const router = useRouter();
   const { user, signOut } = useAuth();
-  const [lists, setLists] = useState<ShopList[]>([]);
-  const [refreshing, setRefreshing] = useState(false);
+  const engine = useSyncEngine();
+  const lists = useLists();
+  const status = useSyncStatus();
   const [title, setTitle] = useState('');
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
-    setRefreshing(true);
-    try {
-      setLists(await listsApi.all());
-      setError('');
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setRefreshing(false);
-    }
-  }, []);
-
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load]),
-  );
-
   const create = async () => {
     setBusy(true);
     try {
       const l = await listsApi.create(title.trim());
+      await engine.sync();
       setTitle('');
       router.push({ pathname: '/list/[id]', params: { id: l.id } });
     } catch (e) {
@@ -60,6 +46,7 @@ export default function Lists() {
     setBusy(true);
     try {
       const l = await listsApi.accept(code);
+      await engine.sync();
       setCode('');
       router.push({ pathname: '/list/[id]', params: { id: l.id } });
     } catch (e) {
@@ -74,10 +61,11 @@ export default function Lists() {
       <FlatList
         data={lists}
         keyExtractor={(l) => l.id}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} />}
+        refreshControl={<RefreshControl refreshing={status.syncing} onRefresh={() => engine.sync()} />}
         contentContainerStyle={styles.content}
         ListHeaderComponent={
           <View style={styles.form}>
+            {!status.online ? <Text style={styles.muted}>Нет связи. Показаны сохранённые списки; создать список или войти по коду можно только с интернетом.</Text> : null}
             {error ? <Text style={styles.error}>{error}</Text> : null}
             <View style={styles.row}>
               <TextInput style={[styles.input, styles.flex]} value={title} onChangeText={setTitle} placeholder="Название нового списка" maxLength={100} onSubmitEditing={create} />
@@ -89,7 +77,7 @@ export default function Lists() {
             </View>
           </View>
         }
-        ListEmptyComponent={refreshing ? null : <Text style={styles.empty}>Списков пока нет. Создайте первый или введите код приглашения.</Text>}
+        ListEmptyComponent={status.syncing ? null : <Text style={styles.empty}>Списков пока нет. Создайте первый или введите код приглашения.</Text>}
         renderItem={({ item }) => (
           <Pressable style={styles.card} onPress={() => router.push({ pathname: '/list/[id]', params: { id: item.id } })}>
             <Text style={styles.cardTitle}>{item.title}</Text>

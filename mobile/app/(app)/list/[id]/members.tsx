@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { listsApi, type Member, type ShopList } from '../../../../src/api/lists';
 import { useAuth } from '../../../../src/auth/AuthContext';
 import { errorMessage } from '../../../../src/errors';
+import { useSyncEngine } from '../../../../src/sync/SyncProvider';
 import { Button } from '../../../../src/ui/Button';
 import { colors } from '../../../../src/ui/theme';
 
@@ -24,6 +25,7 @@ export default function ListScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { user } = useAuth();
+  const engine = useSyncEngine();
   const [list, setList] = useState<ShopList | null>(null);
   const [people, setPeople] = useState<Member[]>([]);
   const [title, setTitle] = useState('');
@@ -48,6 +50,7 @@ export default function ListScreen() {
   const run = async (fn: () => Promise<void>) => {
     try {
       await fn();
+      void engine.sync();
     } catch (e) {
       setError(errorMessage(e));
     }

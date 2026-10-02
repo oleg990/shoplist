@@ -19,7 +19,7 @@ function parseNum(s: string): number | null | undefined {
 
 export default function ListItems() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { items, error, refreshing, refresh, add, update, remove, clearBought } = useListItems(id);
+  const { items, status, refresh, add, update, remove, clearBought } = useListItems(id);
   const [text, setText] = useState('');
   const [editing, setEditing] = useState<Item | null>(null);
   const suggestions = useCatalogSearch(text);
@@ -65,13 +65,18 @@ export default function ListItems() {
           </ScrollView>
         ) : null}
       </View>
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+      {!status.online ? (
+        <Text style={styles.offline}>
+          Нет связи{status.pending > 0 ? `, ${status.pending} изм. сохранено на телефоне и уйдёт позже` : ''}
+        </Text>
+      ) : null}
+      {status.error ? <Text style={styles.error}>{status.error}</Text> : null}
       <FlatList
         data={items}
         keyExtractor={(i) => i.id}
         keyboardShouldPersistTaps="handled"
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
-        ListEmptyComponent={refreshing ? null : <Text style={styles.empty}>Список пуст. Добавьте первую позицию.</Text>}
+        refreshControl={<RefreshControl refreshing={status.syncing} onRefresh={refresh} />}
+        ListEmptyComponent={status.syncing ? null : <Text style={styles.empty}>Список пуст. Добавьте первую позицию.</Text>}
         renderItem={({ item }) => (
           <Pressable style={styles.item} onPress={() => setEditing(item)}>
             <Switch value={item.is_bought} onValueChange={(v) => update(item.id, { is_bought: v })} trackColor={{ true: colors.primary }} />
@@ -162,6 +167,7 @@ const styles = StyleSheet.create({
   muted: { color: colors.muted },
   empty: { color: colors.muted, textAlign: 'center', marginTop: 24 },
   error: { color: colors.error, paddingHorizontal: 16 },
+  offline: { color: colors.muted, backgroundColor: '#f3f3f3', paddingHorizontal: 16, paddingVertical: 6 },
   headerLink: { color: colors.primary, fontSize: 16 },
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   sheet: { backgroundColor: colors.bg, padding: 16, gap: 10, borderTopLeftRadius: 16, borderTopRightRadius: 16 },
