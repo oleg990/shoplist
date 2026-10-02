@@ -45,21 +45,26 @@ func NewRouter(db Pinger, queries *store.Queries, authSvc *auth.Service, listsSv
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 
+	// Лимиты по IP (в памяти одного процесса). Общий — защита от перегрузки; на вход строже: перебор кодов и спам письмами.
+	general := limit(20, 200)
+	authLimit := limit(0.5, 20)
+
 	// WebSocket живёт долго, поэтому таймаут запроса применяется только к обычным маршрутам.
-	r.Get("/api/v1/ws", a.ws)
+	r.With(general).Get("/api/v1/ws", a.ws)
 
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.Timeout(15 * time.Second))
+		r.Use(general)
 
 		r.Get("/healthz", a.health)
 		r.Route("/api/v1", func(r chi.Router) {
 			r.Get("/catalog/search", a.searchCatalog)
 			r.Get("/categories", a.listCategories)
 
-			r.Post("/auth/request-code", a.requestCode)
-			r.Post("/auth/verify", a.verifyCode)
-			r.Post("/auth/refresh", a.refresh)
-			r.Post("/auth/logout", a.logout)
+			r.With(authLimit).Post("/auth/request-code", a.requestCode)
+			r.With(authLimit).Post("/auth/verify", a.verifyCode)
+			r.With(authLimit).Post("/auth/refresh", a.refresh)
+			r.With(authLimit).Post("/auth/logout", a.logout)
 
 			r.Group(func(r chi.Router) {
 				r.Use(a.requireAuth)
