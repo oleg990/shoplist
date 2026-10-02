@@ -16,6 +16,7 @@ import (
 	"shoplist/server/internal/auth"
 	"shoplist/server/internal/db"
 	"shoplist/server/internal/httpapi"
+	"shoplist/server/internal/lists"
 	"shoplist/server/internal/store"
 )
 
@@ -63,7 +64,7 @@ func newTestEnv(t *testing.T) (*httptest.Server, *captureMailer, *pgxpool.Pool) 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	mailer := &captureMailer{codes: map[string]string{}}
 	authSvc := auth.NewService(pool, mailer, "test-secret-test-secret-test-secret-0123")
-	srv := httptest.NewServer(httpapi.NewRouter(pool, store.New(pool), authSvc, log))
+	srv := httptest.NewServer(httpapi.NewRouter(pool, store.New(pool), authSvc, lists.NewService(pool), log))
 	t.Cleanup(srv.Close)
 	return srv, mailer, pool
 }

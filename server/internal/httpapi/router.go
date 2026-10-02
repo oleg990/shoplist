@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"shoplist/server/internal/auth"
+	"shoplist/server/internal/lists"
 	"shoplist/server/internal/store"
 )
 
@@ -26,11 +27,12 @@ type API struct {
 	db      Pinger
 	queries *store.Queries
 	auth    *auth.Service
+	lists   *lists.Service
 	log     *slog.Logger
 }
 
-func NewRouter(db Pinger, queries *store.Queries, authSvc *auth.Service, log *slog.Logger) http.Handler {
-	a := &API{db: db, queries: queries, auth: authSvc, log: log}
+func NewRouter(db Pinger, queries *store.Queries, authSvc *auth.Service, listsSvc *lists.Service, log *slog.Logger) http.Handler {
+	a := &API{db: db, queries: queries, auth: authSvc, lists: listsSvc, log: log}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -53,6 +55,18 @@ func NewRouter(db Pinger, queries *store.Queries, authSvc *auth.Service, log *sl
 			r.Get("/me", a.me)
 			r.Patch("/me", a.updateMe)
 			r.Delete("/me", a.deleteMe)
+
+			r.Post("/lists", a.createList)
+			r.Get("/lists", a.listLists)
+			r.Route("/lists/{listID}", func(r chi.Router) {
+				r.Get("/", a.getList)
+				r.Patch("/", a.renameList)
+				r.Delete("/", a.deleteList)
+				r.Get("/members", a.listMembers)
+				r.Delete("/members/{userID}", a.removeMember)
+				r.Post("/invites", a.createInvite)
+			})
+			r.Post("/invites/accept", a.acceptInvite)
 		})
 	})
 	return r
