@@ -1,0 +1,6 @@
+.env
+*.local
+/server/bin/
+/mobile/node_modules/
+/mobile/.expo/
+.DS_Store
