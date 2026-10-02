@@ -1,25 +1,14 @@
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, Platform, ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ScrollView, Share, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { listsApi, type Member, type ShopList } from '../../../../src/api/lists';
 import { useAuth } from '../../../../src/auth/AuthContext';
 import { errorMessage } from '../../../../src/errors';
 import { useSyncEngine } from '../../../../src/sync/SyncProvider';
+import { confirm } from '../../../../src/ui/confirm';
 import { Button } from '../../../../src/ui/Button';
 import { colors } from '../../../../src/ui/theme';
-
-// Alert.alert на web не показывает кнопки, поэтому там спрашиваем через confirm.
-function confirm(title: string, message: string, action: string, onYes: () => void) {
-  if (Platform.OS === 'web') {
-    if (globalThis.confirm?.(`${title}\n${message}`)) onYes();
-    return;
-  }
-  Alert.alert(title, message, [
-    { text: 'Отмена', style: 'cancel' },
-    { text: action, style: 'destructive', onPress: onYes },
-  ]);
-}
 
 export default function ListScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();

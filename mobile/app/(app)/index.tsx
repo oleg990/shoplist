@@ -5,6 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { listsApi } from '../../src/api/lists';
 import { useAuth } from '../../src/auth/AuthContext';
 import { errorMessage } from '../../src/errors';
+import { confirm } from '../../src/ui/confirm';
 import { Button } from '../../src/ui/Button';
 import { useLists, useSyncStatus } from '../../src/sync/hooks';
 import { useSyncEngine } from '../../src/sync/SyncProvider';
@@ -19,7 +20,7 @@ function members(n: number) {
 
 export default function Lists() {
   const router = useRouter();
-  const { user, signOut } = useAuth();
+  const { user, signOut, deleteAccount } = useAuth();
   const engine = useSyncEngine();
   const lists = useLists();
   const status = useSyncStatus();
@@ -88,6 +89,18 @@ export default function Lists() {
           <View style={styles.footer}>
             <Text style={styles.muted}>{user?.email}</Text>
             <Button title="Выйти" variant="link" onPress={signOut} />
+            <Button
+              title="Удалить аккаунт"
+              variant="link"
+              onPress={() =>
+                confirm(
+                  'Удалить аккаунт?',
+                  'Ваши данные будут удалены. Списки, где есть другие участники, перейдут к ним, остальные исчезнут. Это нельзя отменить.',
+                  'Удалить',
+                  () => deleteAccount().catch((e) => setError(errorMessage(e))),
+                )
+              }
+            />
           </View>
         }
       />
