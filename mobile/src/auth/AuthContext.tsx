@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api, setSignedOutHandler, type User } from '../api';
+import { unregisterPush } from '../push/register';
 import { clearLocalData } from '../sync/localData';
 
 type AuthState = {
@@ -38,6 +39,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    await unregisterPush();
     await api.logout();
     setUser(null);
     await clearLocalData();
