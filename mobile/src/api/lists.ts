@@ -17,6 +17,7 @@ export type Invite = { code: string; expires_at: string; max_uses: number; uses:
 export const makeListsApi = (api: ApiClient) => ({
   all: () => api.request<{ items: ShopList[] }>('GET', '/api/v1/lists').then((r) => r.items),
   get: (id: string) => api.request<ShopList>('GET', `/api/v1/lists/${id}`),
+  put: (id: string, title: string) => api.request<ShopList>('PUT', `/api/v1/lists/${id}`, { title }),
   create: (title: string) => api.request<ShopList>('POST', '/api/v1/lists', { title }),
   rename: (id: string, title: string) => api.request<ShopList>('PATCH', `/api/v1/lists/${id}`, { title }),
   remove: (id: string) => api.request<void>('DELETE', `/api/v1/lists/${id}`),

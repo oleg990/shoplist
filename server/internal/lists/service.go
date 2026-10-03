@@ -41,6 +41,8 @@ var (
 	ErrInviteInvalid    = errors.New("invite is invalid, expired or used up")
 	ErrListFull         = errors.New("list has too many members")
 	ErrOwnerCannotLeave = errors.New("owner cannot leave the list")
+	// ErrConflict: список с таким id уже есть у другого пользователя или удалён.
+	ErrConflict = errors.New("list id is taken by another user or was deleted")
 )
 
 type List struct {
@@ -112,6 +114,44 @@ func (s *Service) Create(ctx context.Context, userID uuid.UUID, title string) (L
 	}
 	return List{ID: l.ID, Title: l.Title, OwnerID: l.OwnerID, Role: RoleOwner, MemberCount: 1,
 		CreatedAt: l.CreatedAt.Time, UpdatedAt: l.UpdatedAt.Time}, nil
+}
+
+// CreateWithID идемпотентно создаёт список с id, который выбрал клиент (для работы офлайн).
+// Повтор запроса владельцем возвращает уже созданный список; created=false.
+func (s *Service) CreateWithID(ctx context.Context, userID, id uuid.UUID, title string) (l List, created bool, err error) {
+	title, err = validTitle(title)
+	if err != nil {
+		return List{}, false, err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return List{}, false, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	q := s.q.WithTx(tx)
+
+	row, err := q.CreateListWithID(ctx, store.CreateListWithIDParams{ID: id, Title: title, OwnerID: userID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		// id уже занят: это повтор от владельца или чужой/удалённый список.
+		existing, gerr := get(ctx, q, userID, id)
+		if gerr != nil || existing.OwnerID != userID {
+			return List{}, false, ErrConflict
+		}
+		return existing, false, nil
+	} else if err != nil {
+		return List{}, false, err
+	}
+	if err := q.AddListMember(ctx, store.AddListMemberParams{ListID: row.ID, UserID: userID, Role: RoleOwner}); err != nil {
+		return List{}, false, err
+	}
+	if err := realtime.Notify(ctx, q, realtime.Event{ListID: row.ID, Kind: realtime.KindList}); err != nil {
+		return List{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return List{}, false, err
+	}
+	return List{ID: row.ID, Title: row.Title, OwnerID: row.OwnerID, Role: RoleOwner, MemberCount: 1,
+		CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time}, true, nil
 }
 
 func (s *Service) ListForUser(ctx context.Context, userID uuid.UUID) ([]List, error) {

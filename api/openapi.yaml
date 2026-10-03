@@ -335,6 +335,27 @@ paths:
   /api/v1/lists/{listID}:
     parameters:
         - { name: listID, in: path, required: true, schema: { type: string, format: uuid } }
+    put:
+      summary: "Создать список с id клиента (идемпотентно, для работы офлайн)"
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string }
+      responses:
+        "201":
+          description: Создан
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/List" }
+        "200": { description: Повтор запроса владельцем, возвращён существующий список }
+        "400": { description: Некорректное название }
+        "409": { description: id занят чужим или удалённым списком }
     get:
       summary: Список. Для не участника всегда 404, чтобы не раскрывать существование списка
       security: [{ bearerAuth: [] }]

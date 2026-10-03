@@ -25,6 +25,22 @@ class FakeServer implements Remote {
     this.guard('lists');
     return this.listRows;
   }
+  async putList(id: string, title: string) {
+    this.guard('putList');
+    let l = this.listRows.find((x) => x.id === id);
+    if (!l) {
+      l = { id, title, owner_id: 'u', role: 'owner', member_count: 1, created_at: '', updated_at: '' };
+      this.listRows = [l, ...this.listRows];
+    }
+    return l;
+  }
+  async renameList(id: string, title: string) {
+    this.guard('renameList');
+    const l = this.listRows.find((x) => x.id === id);
+    if (!l) throw new ApiError(404, 'not found');
+    l.title = title;
+    return l;
+  }
   async changes(listId: string, since: number) {
     this.guard('changes');
     return { items: [...this.items.values()].filter((i) => i.list_id === listId && i.version > since), cursor: this.version };
@@ -263,4 +279,74 @@ test('getItems returns a stable reference until something changes', async () => 
   const e = mk(new FakeServer());
   await e.load();
   expect(e.getItems('L1')).toBe(e.getItems('L1'));
+});
+
+test('a list created offline with items in it reaches the server in order', async () => {
+  const server = new FakeServer();
+  const e = mk(server);
+  await e.load();
+  await e.sync();
+  server.down = true;
+  const id = e.createList('Дача');
+  e.addItem(id, { name: 'Уголь' });
+  expect(e.getLists().map((l) => l.title)).toEqual(['Дача', 'Дом']);
+  expect(e.getItems(id).map((i) => i.name)).toEqual(['Уголь']);
+  await e.sync();
+  expect(server.listRows.map((l) => l.id)).not.toContain(id);
+
+  server.down = false;
+  server.calls = [];
+  await e.sync();
+  expect(server.calls.indexOf('putList')).toBeLessThan(server.calls.indexOf('put'));
+  expect(server.listRows.map((l) => l.title)).toContain('Дача');
+  expect(e.getLists().filter((l) => l.id === id)).toHaveLength(1);
+  expect(e.getItems(id).map((i) => i.name)).toEqual(['Уголь']);
+  expect(e.getStatus().pending).toBe(0);
+});
+
+test('renaming offline updates the title at once and merges into a pending create', async () => {
+  const server = new FakeServer();
+  const e = mk(server);
+  await e.load();
+  await e.sync();
+  server.down = true;
+  e.renameList('L1', 'Квартира');
+  expect(e.getLists()[0].title).toBe('Квартира');
+  const id = e.createList('Черновик');
+  e.renameList(id, 'Дача');
+  expect(e.getStatus().pending).toBe(2);
+
+  server.down = false;
+  await e.sync();
+  expect(server.listRows.map((l) => l.title).sort()).toEqual(['Дача', 'Квартира']);
+});
+
+test('a list created offline survives a restart', async () => {
+  const server = new FakeServer();
+  const kv = new MemoryKv();
+  const a = mk(server, kv);
+  await a.load();
+  await a.sync();
+  server.down = true;
+  const id = a.createList('Праздник');
+  await a.flushStorage();
+
+  server.down = false;
+  const b = mk(server, kv);
+  await b.load();
+  expect(b.getLists().map((l) => l.id)).toContain(id);
+  await b.sync();
+  expect(server.listRows.map((l) => l.id)).toContain(id);
+});
+
+test('a rejected list create is dropped and the list disappears', async () => {
+  const server = new FakeServer();
+  const e = mk(server);
+  await e.load();
+  await e.sync();
+  server.reject = (k) => (k === 'putList' ? new ApiError(409, 'list id is taken') : null);
+  const id = e.createList('Чужой');
+  await e.sync();
+  expect(e.getLists().map((l) => l.id)).not.toContain(id);
+  expect(e.getStatus().pending).toBe(0);
 });

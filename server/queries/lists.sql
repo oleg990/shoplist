@@ -2,6 +2,11 @@
 INSERT INTO lists (title, owner_id) VALUES ($1, $2)
 RETURNING id, title, owner_id, created_at, updated_at;
 
+-- name: CreateListWithID :one
+INSERT INTO lists (id, title, owner_id) VALUES ($1, $2, $3)
+ON CONFLICT (id) DO NOTHING
+RETURNING id, title, owner_id, created_at, updated_at;
+
 -- name: AddListMember :exec
 INSERT INTO list_members (list_id, user_id, role) VALUES ($1, $2, $3)
 ON CONFLICT DO NOTHING;

@@ -109,6 +109,39 @@ func (q *Queries) CreateList(ctx context.Context, arg CreateListParams) (CreateL
 	return i, err
 }
 
+const createListWithID = `-- name: CreateListWithID :one
+INSERT INTO lists (id, title, owner_id) VALUES ($1, $2, $3)
+ON CONFLICT (id) DO NOTHING
+RETURNING id, title, owner_id, created_at, updated_at
+`
+
+type CreateListWithIDParams struct {
+	ID      uuid.UUID `json:"id"`
+	Title   string    `json:"title"`
+	OwnerID uuid.UUID `json:"owner_id"`
+}
+
+type CreateListWithIDRow struct {
+	ID        uuid.UUID          `json:"id"`
+	Title     string             `json:"title"`
+	OwnerID   uuid.UUID          `json:"owner_id"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) CreateListWithID(ctx context.Context, arg CreateListWithIDParams) (CreateListWithIDRow, error) {
+	row := q.db.QueryRow(ctx, createListWithID, arg.ID, arg.Title, arg.OwnerID)
+	var i CreateListWithIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.Title,
+		&i.OwnerID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getInviteByCodeForUpdate = `-- name: GetInviteByCodeForUpdate :one
 SELECT i.id, i.list_id, i.expires_at, i.max_uses, i.uses
 FROM invites i
