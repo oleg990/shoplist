@@ -7,10 +7,11 @@ import { Button } from '../../src/ui/Button';
 import { Screen } from '../../src/ui/Screen';
 import { colors } from '../../src/ui/theme';
 
-export default function Login() {
+export default function Recover() {
   const router = useRouter();
-  const { signIn } = useAuth();
+  const { recover } = useAuth();
   const [username, setUsername] = useState('');
+  const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -19,8 +20,7 @@ export default function Login() {
     setBusy(true);
     setError('');
     try {
-      await signIn(username.trim(), password);
-      // Переход на главный экран делает Guard в корневом layout.
+      await recover(username.trim(), code.trim().toUpperCase(), password);
     } catch (e) {
       setError(errorMessage(e));
       setBusy(false);
@@ -29,38 +29,30 @@ export default function Login() {
 
   return (
     <Screen>
-      <Text style={styles.title}>ShopList</Text>
-      <TextInput
-        style={styles.input}
-        value={username}
-        onChangeText={setUsername}
-        placeholder="Логин"
-        autoCapitalize="none"
-        autoComplete="username"
-        autoCorrect={false}
-        textContentType="username"
-      />
+      <Text style={styles.title}>Сброс пароля</Text>
+      <Text style={styles.hint}>Введите логин, один из кодов восстановления, выданных при регистрации, и новый пароль.</Text>
+      <TextInput style={styles.input} value={username} onChangeText={setUsername} placeholder="Логин" autoCapitalize="none" autoCorrect={false} />
+      <TextInput style={styles.input} value={code} onChangeText={setCode} placeholder="XXXXX-XXXXX" autoCapitalize="characters" autoCorrect={false} />
       <TextInput
         style={styles.input}
         value={password}
         onChangeText={setPassword}
-        placeholder="Пароль"
+        placeholder="Новый пароль (от 8 символов)"
         secureTextEntry
         autoCapitalize="none"
-        autoComplete="current-password"
-        textContentType="password"
+        autoComplete="new-password"
         onSubmitEditing={submit}
       />
       {error ? <Text style={styles.error}>{error}</Text> : null}
-      <Button title="Войти" onPress={submit} loading={busy} disabled={!username.trim() || !password} />
-      <Button title="Создать аккаунт" variant="link" onPress={() => router.push('/register')} />
-      <Button title="Забыли пароль?" variant="link" onPress={() => router.push('/recover')} />
+      <Button title="Сменить пароль и войти" onPress={submit} loading={busy} disabled={!username.trim() || code.trim().length < 10 || password.length < 8} />
+      <Button title="Назад" variant="link" onPress={() => router.back()} />
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  title: { fontSize: 32, fontWeight: '700', color: colors.text },
+  title: { fontSize: 28, fontWeight: '700', color: colors.text },
+  hint: { fontSize: 15, color: colors.muted },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: 8, padding: 12, fontSize: 16, color: colors.text },
   error: { color: colors.error },
 });

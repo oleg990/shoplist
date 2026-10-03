@@ -4,7 +4,7 @@ const tok = (n: number): Tokens => ({
   access_token: `a${n}`,
   refresh_token: `r${n}`,
   expires_in: 900,
-  user: { id: 'u1', email: 'a@b.c', name: '' },
+  user: { id: 'u1', username: 'olga', name: '' },
 });
 
 function memStore(initial: Tokens | null): SessionStore & { cur: Tokens | null } {
@@ -34,11 +34,27 @@ function setup(initial: Tokens | null, handler: (url: string, init: RequestInit)
 
 const authHeader = (init: RequestInit) => (init.headers as Record<string, string>).Authorization;
 
-test('verifyCode saves the session', async () => {
-  const { client, store } = setup(null, () => json(200, tok(1)));
-  const user = await client.verifyCode('a@b.c', '123456');
-  expect(user.email).toBe('a@b.c');
+test('login saves the session', async () => {
+  const { client, store, calls } = setup(null, () => json(200, tok(1)));
+  const user = await client.login('olga', 'secret password');
+  expect(user.username).toBe('olga');
   expect(store.cur?.access_token).toBe('a1');
+  expect(JSON.parse(calls[0].init.body as string)).toEqual({ username: 'olga', password: 'secret password' });
+});
+
+test('register returns recovery codes and does not save the session', async () => {
+  const codes = ['AAAAA-BBBBB'];
+  const { client, store } = setup(null, () => json(201, { ...tok(1), recovery_codes: codes }));
+  const t = await client.register('olga', 'secret password', 'Оля');
+  expect(t.recovery_codes).toEqual(codes);
+  expect(store.cur).toBeNull();
+});
+
+test('changePassword replaces the stored tokens', async () => {
+  const { client, store, calls } = setup(tok(1), () => json(200, tok(2)));
+  await client.changePassword('old password', 'new password');
+  expect(calls[0].url).toBe('http://x/api/v1/me/password');
+  expect(store.cur?.refresh_token).toBe('r2');
 });
 
 test('sends bearer token from the stored session', async () => {
@@ -83,8 +99,8 @@ test('server error during refresh keeps the session', async () => {
 });
 
 test('401 from login endpoints does not trigger refresh', async () => {
-  const { client, calls } = setup(tok(1), () => json(401, { error: 'invalid or expired code' }));
-  await expect(client.verifyCode('a@b.c', '000000')).rejects.toMatchObject({ status: 401, message: 'invalid or expired code' });
+  const { client, calls } = setup(tok(1), () => json(401, { error: 'invalid username or password' }));
+  await expect(client.login('olga', 'wrong')).rejects.toMatchObject({ status: 401, message: 'invalid username or password' });
   expect(calls).toHaveLength(1);
 });
 
@@ -92,12 +108,12 @@ test('network failure becomes ApiError(0)', async () => {
   const { client } = setup(null, () => {
     throw new TypeError('Network request failed');
   });
-  await expect(client.requestCode('a@b.c')).rejects.toMatchObject({ status: 0 });
+  await expect(client.login('olga', 'x')).rejects.toMatchObject({ status: 0 });
 });
 
 test('429 exposes Retry-After', async () => {
   const { client } = setup(null, () => json(429, { error: 'slow down' }, { 'Retry-After': '60' }));
-  await expect(client.requestCode('a@b.c')).rejects.toMatchObject({ status: 429, retryAfter: 60 });
+  await expect(client.login('olga', 'x')).rejects.toMatchObject({ status: 429, retryAfter: 60 });
 });
 
 test('logout clears the session even when the network fails', async () => {

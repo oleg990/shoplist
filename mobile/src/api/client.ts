@@ -1,12 +1,14 @@
 // HTTP-клиент: подставляет access-токен, при 401 один раз обновляет его по refresh-токену.
 
-export type User = { id: string; email: string; name: string };
+export type User = { id: string; username: string; name: string };
 
 export type Tokens = {
   access_token: string;
   refresh_token: string;
   expires_in: number;
   user: User;
+  // Приходят только в ответе на регистрацию и показываются один раз.
+  recovery_codes?: string[];
 };
 
 export class ApiError extends Error {
@@ -130,14 +132,34 @@ export class ApiClient {
     return (await res.json()) as T;
   }
 
-  requestCode(email: string) {
-    return this.request<void>('POST', '/api/v1/auth/request-code', { email }, false);
+  // Регистрация не сохраняет сессию: сначала пользователь должен увидеть и записать коды восстановления.
+  register(username: string, password: string, name: string) {
+    return this.request<Tokens>('POST', '/api/v1/auth/register', { username, password, name }, false);
   }
 
-  async verifyCode(email: string, code: string): Promise<User> {
-    const t = await this.request<Tokens>('POST', '/api/v1/auth/verify', { email, code }, false);
+  async login(username: string, password: string): Promise<User> {
+    const t = await this.request<Tokens>('POST', '/api/v1/auth/login', { username, password }, false);
     await this.setSession(t);
     return t.user;
+  }
+
+  async recover(username: string, code: string, newPassword: string): Promise<User> {
+    const t = await this.request<Tokens>('POST', '/api/v1/auth/recover', { username, code, new_password: newPassword }, false);
+    await this.setSession(t);
+    return t.user;
+  }
+
+  async changePassword(oldPassword: string, newPassword: string): Promise<void> {
+    const t = await this.request<Tokens>('PUT', '/api/v1/me/password', { old_password: oldPassword, new_password: newPassword });
+    await this.setSession(t);
+  }
+
+  unusedRecoveryCodes() {
+    return this.request<{ unused: number }>('GET', '/api/v1/me/recovery-codes').then((r) => r.unused);
+  }
+
+  newRecoveryCodes(password: string) {
+    return this.request<{ recovery_codes: string[] }>('POST', '/api/v1/me/recovery-codes', { password }).then((r) => r.recovery_codes);
   }
 
   me() {

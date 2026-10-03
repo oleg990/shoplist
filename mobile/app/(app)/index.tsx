@@ -87,7 +87,8 @@ export default function Lists() {
         )}
         ListFooterComponent={
           <View style={styles.footer}>
-            <Text style={styles.muted}>{user?.email}</Text>
+            <Text style={styles.muted}>{user?.username}</Text>
+            <Button title="Пароль и коды восстановления" variant="link" onPress={() => router.push('/account')} />
             <Button title="Выйти" variant="link" onPress={signOut} />
             <Button
               title="Удалить аккаунт"

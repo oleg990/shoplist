@@ -7,8 +7,7 @@
 
 1. VPS с Linux (подойдёт 1 vCPU / 1–2 ГБ), Docker и Docker Compose plugin.
 2. Домен (например `api.ваш-домен.ru`) с A-записью на IP сервера. Порты 80 и 443 открыты.
-3. SMTP для писем с кодами входа (любой сервис транзакционной почты со STARTTLS, порт 587). Без него вход не работает: в `production` сервер не стартует без `SMTP_*`.
-4. Образ сервера в GitHub Container Registry. Его собирает workflow `server-image` при каждом изменении `server/` в `main`.
+3. Образ сервера в GitHub Container Registry. Его собирает workflow `server-image` при каждом изменении `server/` в `main`.
    После первой сборки сделайте пакет публичным (GitHub → Packages → shoplist-server → Package settings → Change visibility)
    или на сервере выполните `docker login ghcr.io` с токеном `read:packages`.
 
@@ -17,7 +16,7 @@
 ```sh
 git clone https://github.com/oleg990/shoplist.git && cd shoplist/infra/prod
 cp .env.example .env && chmod 600 .env
-# заполните .env: DOMAIN, ACME_EMAIL, POSTGRES_PASSWORD, JWT_SECRET, SMTP_*
+# заполните .env: DOMAIN, ACME_EMAIL, POSTGRES_PASSWORD, JWT_SECRET
 docker compose pull
 docker compose up -d
 docker compose logs -f server caddy
