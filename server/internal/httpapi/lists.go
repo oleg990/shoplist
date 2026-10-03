@@ -21,6 +21,8 @@ func (a *API) listErr(w http.ResponseWriter, op string, err error) {
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, lists.ErrInviteInvalid):
 		writeError(w, http.StatusNotFound, "invite is invalid, expired or used up")
+	case errors.Is(err, lists.ErrConflict):
+		writeError(w, http.StatusConflict, "list id is taken")
 	case errors.Is(err, lists.ErrListFull):
 		writeError(w, http.StatusConflict, "list has too many members")
 	case errors.Is(err, lists.ErrOwnerCannotLeave):
@@ -53,6 +55,30 @@ func (a *API) createList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, l)
+}
+
+// putList идемпотентно создаёт список с id клиента: 201 при создании, 200 при повторе владельцем, 409 если id занят.
+func (a *API) putList(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathUUID(w, r, "listID")
+	if !ok {
+		return
+	}
+	var in struct {
+		Title string `json:"title"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	l, created, err := a.lists.CreateWithID(r.Context(), userID(r.Context()), id, in.Title)
+	if err != nil {
+		a.listErr(w, "put list", err)
+		return
+	}
+	status := http.StatusOK
+	if created {
+		status = http.StatusCreated
+	}
+	writeJSON(w, status, l)
 }
 
 func (a *API) listLists(w http.ResponseWriter, r *http.Request) {

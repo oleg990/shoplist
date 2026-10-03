@@ -4,16 +4,20 @@ import { ApiError } from '../api/client';
 import { applyChanges, nextPosition, sortItems } from '../items/merge';
 import type { KeyValueStore } from './kv';
 
-// Очередь неотправленных правок позиций. Каждая правка идемпотентна на сервере
+// Очередь неотправленных правок. Каждая правка идемпотентна на сервере
 // (PUT с id клиента, PATCH, DELETE), поэтому повторная отправка после обрыва безопасна.
 export type Op =
   | { seq: number; kind: 'put'; listId: string; itemId: string; body: ItemInput }
   | { seq: number; kind: 'patch'; listId: string; itemId: string; body: ItemPatch }
   | { seq: number; kind: 'delete'; listId: string; itemId: string }
-  | { seq: number; kind: 'clear'; listId: string };
+  | { seq: number; kind: 'clear'; listId: string }
+  | { seq: number; kind: 'listCreate'; listId: string; title: string; at: string }
+  | { seq: number; kind: 'listRename'; listId: string; title: string };
 
 export interface Remote {
   lists(): Promise<ShopList[]>;
+  putList(id: string, title: string): Promise<ShopList>;
+  renameList(id: string, title: string): Promise<ShopList>;
   changes(listId: string, since: number): Promise<{ items: Item[]; cursor: number }>;
   put(listId: string, id: string, body: ItemInput): Promise<Item>;
   patch(listId: string, id: string, body: ItemPatch): Promise<Item>;
@@ -35,6 +39,8 @@ const isTransient = (e: unknown) => !(e instanceof ApiError) || e.status === 0 |
 
 export class SyncEngine {
   private lists: ShopList[] = [];
+  // То, что видит пользователь: списки сервера плюс ещё не отправленные создания и переименования.
+  private listView: ShopList[] = [];
   // Подтверждённое сервером состояние; то, что видит пользователь, = base + очередь правок.
   private base = new Map<string, ListData>();
   private ops: Op[] = [];
@@ -67,7 +73,7 @@ export class SyncEngine {
     this.changed();
   }
 
-  getLists = () => this.lists;
+  getLists = () => this.listView;
   getStatus = () => this.status;
 
   // Возвращает один и тот же массив, пока ничего не изменилось (нужно для useSyncExternalStore).
@@ -107,20 +113,57 @@ export class SyncEngine {
         items = items.map((x) => (x.id === op.itemId ? { ...x, ...op.body } : x));
       } else if (op.kind === 'delete') {
         items = items.filter((x) => x.id !== op.itemId);
-      } else {
+      } else if (op.kind === 'clear') {
         items = items.filter((x) => !x.is_bought);
       }
     }
     return items;
   }
 
+  private computeLists(): ShopList[] {
+    let out = [...this.lists];
+    for (const op of this.ops) {
+      if (op.kind === 'listCreate') {
+        if (!out.some((l) => l.id === op.listId)) {
+          out.unshift({ id: op.listId, title: op.title, owner_id: '', role: 'owner', member_count: 1, created_at: op.at, updated_at: op.at });
+        }
+      } else if (op.kind === 'listRename') {
+        out = out.map((l) => (l.id === op.listId ? { ...l, title: op.title } : l));
+      }
+    }
+    return out;
+  }
+
   private changed() {
     this.viewCache.clear();
+    this.listView = this.computeLists();
     this.status = { ...this.status, pending: this.ops.length };
     this.listeners.forEach((l) => l());
   }
 
   // ---- правки пользователя (работают без сети) ----
+
+  // Создаёт список на устройстве; на сервер он уйдёт при первой возможности (PUT с id клиента).
+  createList(title: string): string {
+    const listId = this.newId();
+    this.enqueue({ kind: 'listCreate', listId, title, at: this.now() });
+    return listId;
+  }
+
+  renameList(listId: string, title: string) {
+    // Неотправленное создание или переименование просто получает новое название.
+    for (let i = this.ops.length - 1; i >= 0; i--) {
+      const o = this.ops[i];
+      if ((o.kind === 'listCreate' || o.kind === 'listRename') && o.listId === listId && o.seq !== this.inflight) {
+        o.title = title;
+        this.persistOps();
+        this.changed();
+        this.requestSync();
+        return;
+      }
+    }
+    this.enqueue({ kind: 'listRename', listId, title });
+  }
 
   addItem(listId: string, input: Partial<ItemInput> & { name: string }): string {
     const itemId = this.newId();
@@ -272,7 +315,16 @@ export class SyncEngine {
         return this.remote.remove(op.listId, op.itemId);
       case 'clear':
         return this.remote.clearBought(op.listId);
+      case 'listCreate':
+        return this.acceptList(await this.remote.putList(op.listId, op.title));
+      case 'listRename':
+        return this.acceptList(await this.remote.renameList(op.listId, op.title));
     }
+  }
+
+  private acceptList(l: ShopList) {
+    this.lists = this.lists.some((x) => x.id === l.id) ? this.lists.map((x) => (x.id === l.id ? l : x)) : [l, ...this.lists];
+    this.saveLists();
   }
 
   private accept(listId: string, item: Item) {

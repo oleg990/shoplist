@@ -96,6 +96,7 @@ func NewRouter(db Pinger, queries *store.Queries, authSvc *auth.Service, listsSv
 				r.Post("/lists", a.createList)
 				r.Get("/lists", a.listLists)
 				r.Route("/lists/{listID}", func(r chi.Router) {
+					r.Put("/", a.putList)
 					r.Get("/", a.getList)
 					r.Patch("/", a.renameList)
 					r.Delete("/", a.deleteList)

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/google/uuid"
 	"time"
 )
 
@@ -268,5 +270,41 @@ func TestLeaveAndRemoveMembers(t *testing.T) {
 	// Выгнанный может вернуться по действующему приглашению, а удалять несуществующего участника нельзя.
 	if code := call(t, "DELETE", base+b.User.ID, owner.AccessToken, nil, nil); code != http.StatusNotFound {
 		t.Fatalf("remove absent member status = %d, want 404", code)
+	}
+}
+
+func TestPutListIsIdempotent(t *testing.T) {
+	srv, _ := newTestEnv(t)
+	owner := login(t, srv.URL, uniqueName())
+	other := login(t, srv.URL, uniqueName())
+	id := uuid.NewString()
+	url := srv.URL + "/api/v1/lists/" + id
+
+	var l listResp
+	if code := call(t, "PUT", url, owner.AccessToken, map[string]string{"title": "  Офлайн  "}, &l); code != http.StatusCreated || l.ID != id || l.Title != "Офлайн" || l.Role != "owner" {
+		t.Fatalf("create: status=%d %+v", code, l)
+	}
+	// Повтор (запрос из очереди ушёл второй раз) не создаёт второй список.
+	var again listResp
+	if code := call(t, "PUT", url, owner.AccessToken, map[string]string{"title": "Офлайн"}, &again); code != http.StatusOK || again.ID != id {
+		t.Fatalf("repeat: status=%d %+v", code, again)
+	}
+	var mine struct{ Items []listResp }
+	call(t, "GET", srv.URL+"/api/v1/lists", owner.AccessToken, nil, &mine)
+	if len(mine.Items) != 1 {
+		t.Fatalf("want 1 list, got %d", len(mine.Items))
+	}
+
+	// Чужой id занят: 409, список другого пользователя не раскрывается и не меняется.
+	if code := call(t, "PUT", url, other.AccessToken, map[string]string{"title": "Мой"}, nil); code != http.StatusConflict {
+		t.Fatalf("foreign id status = %d, want 409", code)
+	}
+	if code := call(t, "PUT", srv.URL+"/api/v1/lists/"+uuid.NewString(), owner.AccessToken, map[string]string{"title": ""}, nil); code != http.StatusBadRequest {
+		t.Fatalf("empty title status = %d, want 400", code)
+	}
+	// Удалённый список: id остаётся занятым.
+	call(t, "DELETE", url, owner.AccessToken, nil, nil)
+	if code := call(t, "PUT", url, owner.AccessToken, map[string]string{"title": "Снова"}, nil); code != http.StatusConflict {
+		t.Fatalf("deleted id status = %d, want 409", code)
 	}
 }

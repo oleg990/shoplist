@@ -49,8 +49,8 @@ export default function ListScreen() {
 
   const rename = () =>
     run(async () => {
-      const l = await listsApi.rename(id, title.trim());
-      setList(l);
+      engine.renameList(id, title.trim());
+      setList((l) => (l ? { ...l, title: title.trim() } : l));
     });
 
   const invite = () =>

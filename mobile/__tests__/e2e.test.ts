@@ -30,7 +30,7 @@ async function login(username: string) {
 function remoteOf(c: ApiClient): Remote {
   const lists = makeListsApi(c);
   const items = makeItemsApi(c);
-  return { lists: lists.all, changes: items.changes, put: items.put, patch: items.patch, remove: items.remove, clearBought: items.clearBought };
+  return { lists: lists.all, putList: lists.put, renameList: lists.rename, changes: items.changes, put: items.put, patch: items.patch, remove: items.remove, clearBought: items.clearBought };
 }
 
 const engineFor = (c: ApiClient) => new SyncEngine(new MemoryKv(), remoteOf(c), () => crypto.randomUUID());
@@ -100,6 +100,21 @@ run('against a real server', () => {
     await a.logout();
     const probe = new ApiClient({ baseUrl: URL!, fetchFn: realFetch, store: memStore() });
     await expect(probe.request('POST', '/api/v1/auth/refresh', { refresh_token: s.refresh_token }, false)).rejects.toMatchObject({ status: 401 });
+  });
+
+  test('a list created and renamed offline is created once on the real server', async () => {
+    const a = await login(`oa${stamp}`);
+    const e = engineFor(a);
+    await e.load();
+    const id = e.createList('Офлайн');
+    e.addItem(id, { name: 'Яблоки' });
+    e.renameList(id, 'Офлайн 2');
+    await e.sync();
+    await e.sync(); // повтор: PUT идемпотентен
+    expect(e.getStatus()).toMatchObject({ pending: 0, error: '' });
+    const all = await makeListsApi(a).all();
+    expect(all.filter((l) => l.id === id).map((l) => l.title)).toEqual(['Офлайн 2']);
+    expect(e.getItems(id).map((i) => i.name)).toEqual(['Яблоки']);
   });
 
   test('WebSocket: a change by one member is announced to the other', async () => {

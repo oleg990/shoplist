@@ -29,18 +29,11 @@ export default function Lists() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
-  const create = async () => {
-    setBusy(true);
-    try {
-      const l = await listsApi.create(title.trim());
-      await engine.sync();
-      setTitle('');
-      router.push({ pathname: '/list/[id]', params: { id: l.id } });
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
+  // Список создаётся на телефоне сразу, даже без сети; на сервер уходит в фоне.
+  const create = () => {
+    const id = engine.createList(title.trim());
+    setTitle('');
+    router.push({ pathname: '/list/[id]', params: { id } });
   };
 
   const join = async () => {
@@ -66,11 +59,11 @@ export default function Lists() {
         contentContainerStyle={styles.content}
         ListHeaderComponent={
           <View style={styles.form}>
-            {!status.online ? <Text style={styles.muted}>Нет связи. Показаны сохранённые списки; создать список или войти по коду можно только с интернетом.</Text> : null}
+            {!status.online ? <Text style={styles.muted}>Нет связи. Показаны сохранённые списки. Новые списки создаются и без сети, а войти по коду приглашения можно только с интернетом.</Text> : null}
             {error ? <Text style={styles.error}>{error}</Text> : null}
             <View style={styles.row}>
               <TextInput style={[styles.input, styles.flex]} value={title} onChangeText={setTitle} placeholder="Название нового списка" maxLength={100} onSubmitEditing={create} />
-              <Button title="Создать" onPress={create} disabled={!title.trim()} loading={busy} />
+              <Button title="Создать" onPress={create} disabled={!title.trim()} />
             </View>
             <View style={styles.row}>
               <TextInput style={[styles.input, styles.flex]} value={code} onChangeText={setCode} placeholder="Код приглашения" autoCapitalize="characters" autoCorrect={false} onSubmitEditing={join} />

@@ -11,6 +11,8 @@ import { RealtimeClient, wsUrl } from './realtime';
 
 const remote: Remote = {
   lists: listsApi.all,
+  putList: listsApi.put,
+  renameList: listsApi.rename,
   changes: itemsApi.changes,
   put: itemsApi.put,
   patch: itemsApi.patch,
