@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -28,48 +27,28 @@ import (
 // Интеграционный тест: нужен Postgres, адрес в TEST_DATABASE_URL.
 func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	srv, _, _ := newTestEnv(t)
+	srv, _ := newTestEnv(t)
 	return srv
 }
 
-// captureMailer запоминает последний код, отправленный на каждый адрес.
-type captureMailer struct {
-	mu    sync.Mutex
-	codes map[string]string
-}
-
-func (m *captureMailer) SendLoginCode(_ context.Context, email, code string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.codes[email] = code
-	return nil
-}
-
-func (m *captureMailer) code(email string) string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.codes[email]
-}
-
-// testEnv: сервер со всеми зависимостями. Expo подменён локальным сервером, письма перехватываются.
+// testEnv: сервер со всеми зависимостями. Expo подменён локальным сервером,
 type testEnv struct {
-	srv    *httptest.Server
-	mailer *captureMailer
-	pool   *pgxpool.Pool
-	expo   *fakeExpo
+	srv  *httptest.Server
+	pool *pgxpool.Pool
+	expo *fakeExpo
 }
 
-func newTestEnv(t *testing.T) (*httptest.Server, *captureMailer, *pgxpool.Pool) {
+func newTestEnv(t *testing.T) (*httptest.Server, *pgxpool.Pool) {
 	t.Helper()
 	e := buildEnv(t, 0)
-	return e.srv, e.mailer, e.pool
+	return e.srv, e.pool
 }
 
 // newTestEnvTTL позволяет задать срок жизни access-токена.
-func newTestEnvTTL(t *testing.T, accessTTL time.Duration) (*httptest.Server, *captureMailer, *pgxpool.Pool) {
+func newTestEnvTTL(t *testing.T, accessTTL time.Duration) (*httptest.Server, *pgxpool.Pool) {
 	t.Helper()
 	e := buildEnv(t, accessTTL)
-	return e.srv, e.mailer, e.pool
+	return e.srv, e.pool
 }
 
 // pushWindow — на сколько в тестах откладывается отправка о добавленных позициях.
@@ -100,8 +79,7 @@ func buildEnv(t *testing.T, accessTTL time.Duration) testEnv {
 	case <-time.After(5 * time.Second):
 		t.Fatal("realtime hub did not start listening")
 	}
-	mailer := &captureMailer{codes: map[string]string{}}
-	authSvc := auth.NewService(pool, mailer, "test-secret-test-secret-test-secret-0123")
+	authSvc := auth.NewService(pool, "test-secret-test-secret-test-secret-0123")
 	if accessTTL > 0 {
 		authSvc.SetAccessTTL(accessTTL)
 	}
@@ -110,7 +88,7 @@ func buildEnv(t *testing.T, accessTTL time.Duration) testEnv {
 	t.Cleanup(pushSvc.Close)
 	srv := httptest.NewServer(httpapi.NewRouter(pool, store.New(pool), authSvc, lists.NewService(pool), items.NewService(pool, pushSvc), hub, pushSvc, log))
 	t.Cleanup(srv.Close)
-	return testEnv{srv: srv, mailer: mailer, pool: pool, expo: expo}
+	return testEnv{srv: srv, pool: pool, expo: expo}
 }
 
 func get(t *testing.T, url string, out any) int {
@@ -186,7 +164,7 @@ func TestAuthEndpointsAreRateLimitedPerIP(t *testing.T) {
 	srv := newTestServer(t)
 	var got429 bool
 	for i := 0; i < 40; i++ {
-		resp, err := http.Post(srv.URL+"/api/v1/auth/verify", "application/json", strings.NewReader(`{"email":"nobody@example.com","code":"000000"}`))
+		resp, err := http.Post(srv.URL+"/api/v1/auth/login", "application/json", strings.NewReader(`{"username":"nobody","password":"wrong password"}`))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -47,47 +48,114 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
-func (a *API) requestCode(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Email string `json:"email"`
-	}
-	if !decode(w, r, &in) {
-		return
-	}
-	switch err := a.auth.RequestCode(r.Context(), in.Email); {
-	case err == nil:
-		w.WriteHeader(http.StatusNoContent)
-	case errors.Is(err, auth.ErrInvalidEmail):
-		writeError(w, http.StatusBadRequest, "invalid email")
-	case errors.Is(err, auth.ErrTooManyCodes):
-		w.Header().Set("Retry-After", "60")
-		writeError(w, http.StatusTooManyRequests, "code was requested recently, try again in a minute")
+// authError переводит ошибки сервиса auth в HTTP-ответы; false, если ошибка не распознана.
+func (a *API) authError(w http.ResponseWriter, op string, err error) {
+	var locked auth.LockedError
+	switch {
+	case errors.As(err, &locked):
+		secs := int(locked.RetryAfter.Seconds()) + 1
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")
+	case errors.Is(err, auth.ErrInvalidUsername), errors.Is(err, auth.ErrWeakPassword):
+		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, auth.ErrUsernameTaken):
+		writeError(w, http.StatusConflict, "username is taken")
+	case errors.Is(err, auth.ErrInvalidLogin), errors.Is(err, auth.ErrInvalidRecovery):
+		writeError(w, http.StatusUnauthorized, err.Error())
 	default:
-		a.log.Error("request code", "err", err)
+		a.log.Error(op, "err", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 	}
 }
 
-func (a *API) verifyCode(w http.ResponseWriter, r *http.Request) {
+func (a *API) register(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Email string `json:"email"`
-		Code  string `json:"code"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Name     string `json:"name"`
 	}
 	if !decode(w, r, &in) {
 		return
 	}
-	tokens, err := a.auth.VerifyCode(r.Context(), in.Email, in.Code)
-	switch {
-	case err == nil:
-		writeJSON(w, http.StatusOK, tokens)
-	case errors.Is(err, auth.ErrInvalidEmail):
-		writeError(w, http.StatusBadRequest, "invalid email")
-	case errors.Is(err, auth.ErrInvalidCode):
-		writeError(w, http.StatusUnauthorized, "invalid or expired code")
-	default:
-		a.log.Error("verify code", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
+	tokens, err := a.auth.Register(r.Context(), in.Username, in.Password, in.Name)
+	if err != nil {
+		a.authError(w, "register", err)
+		return
 	}
+	writeJSON(w, http.StatusCreated, tokens)
+}
+
+func (a *API) login(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	tokens, err := a.auth.Login(r.Context(), in.Username, in.Password)
+	if err != nil {
+		a.authError(w, "login", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, tokens)
+}
+
+func (a *API) recoverAccount(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Username    string `json:"username"`
+		Code        string `json:"code"`
+		NewPassword string `json:"new_password"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	tokens, err := a.auth.Recover(r.Context(), in.Username, in.Code, in.NewPassword)
+	if err != nil {
+		a.authError(w, "recover", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, tokens)
+}
+
+func (a *API) changePassword(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	tokens, err := a.auth.ChangePassword(r.Context(), userID(r.Context()), in.OldPassword, in.NewPassword)
+	if err != nil {
+		a.authError(w, "change password", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, tokens)
+}
+
+func (a *API) recoveryCodesCount(w http.ResponseWriter, r *http.Request) {
+	n, err := a.auth.UnusedRecoveryCodes(r.Context(), userID(r.Context()))
+	if err != nil {
+		a.authError(w, "recovery codes count", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"unused": n})
+}
+
+func (a *API) regenerateRecoveryCodes(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Password string `json:"password"`
+	}
+	if !decode(w, r, &in) {
+		return
+	}
+	codes, err := a.auth.NewRecoveryCodes(r.Context(), userID(r.Context()), in.Password)
+	if err != nil {
+		a.authError(w, "regenerate recovery codes", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string][]string{"recovery_codes": codes})
 }
 
 func (a *API) refresh(w http.ResponseWriter, r *http.Request) {

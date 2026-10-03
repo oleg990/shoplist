@@ -9,12 +9,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type AuthIdentity struct {
-	UserID      uuid.UUID `json:"user_id"`
-	Provider    string    `json:"provider"`
-	ProviderUid string    `json:"provider_uid"`
-}
-
 type CatalogItem struct {
 	ID          int32       `json:"id"`
 	Name        string      `json:"name"`
@@ -27,6 +21,14 @@ type Category struct {
 	ID        int32  `json:"id"`
 	Name      string `json:"name"`
 	SortOrder int32  `json:"sort_order"`
+}
+
+type Credential struct {
+	UserID         uuid.UUID          `json:"user_id"`
+	PasswordHash   string             `json:"password_hash"`
+	FailedAttempts int32              `json:"failed_attempts"`
+	LockedUntil    pgtype.Timestamptz `json:"locked_until"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Device struct {
@@ -83,15 +85,6 @@ type ListMember struct {
 	JoinedAt pgtype.Timestamptz `json:"joined_at"`
 }
 
-type LoginCode struct {
-	ID        int64              `json:"id"`
-	Email     string             `json:"email"`
-	CodeHash  string             `json:"code_hash"`
-	Attempts  int32              `json:"attempts"`
-	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-}
-
 type PurchaseHistory struct {
 	ID       int64              `json:"id"`
 	ListID   uuid.UUID          `json:"list_id"`
@@ -101,6 +94,13 @@ type PurchaseHistory struct {
 	Price    pgtype.Numeric     `json:"price"`
 	BoughtBy uuid.NullUUID      `json:"bought_by"`
 	BoughtAt pgtype.Timestamptz `json:"bought_at"`
+}
+
+type RecoveryCode struct {
+	ID       int64              `json:"id"`
+	UserID   uuid.UUID          `json:"user_id"`
+	CodeHash string             `json:"code_hash"`
+	UsedAt   pgtype.Timestamptz `json:"used_at"`
 }
 
 type RefreshToken struct {
@@ -119,8 +119,8 @@ type Unit struct {
 
 type User struct {
 	ID        uuid.UUID          `json:"id"`
-	Email     string             `json:"email"`
 	Name      string             `json:"name"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	DeletedAt pgtype.Timestamptz `json:"deleted_at"`
+	Username  string             `json:"username"`
 }

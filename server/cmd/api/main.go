@@ -51,11 +51,7 @@ func run(log *slog.Logger) error {
 	hub := realtime.NewHub(pool, log)
 	go hub.Run(ctx)
 
-	var mailer auth.Mailer = auth.LogMailer{Log: log}
-	if cfg.SMTP.Host != "" {
-		mailer = auth.SMTPMailer{Host: cfg.SMTP.Host, Port: cfg.SMTP.Port, User: cfg.SMTP.User, Password: cfg.SMTP.Password, From: cfg.SMTP.From}
-	}
-	authSvc := auth.NewService(pool, mailer, cfg.JWTSecret)
+	authSvc := auth.NewService(pool, cfg.JWTSecret)
 
 	pushSvc := push.NewService(pool, push.ExpoSender{URL: cfg.ExpoPushURL, AccessToken: cfg.ExpoAccessToken}, 20*time.Second, log)
 	defer pushSvc.Close()

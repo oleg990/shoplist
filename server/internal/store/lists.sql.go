@@ -292,7 +292,7 @@ func (q *Queries) ListMemberIDs(ctx context.Context, listID uuid.UUID) ([]uuid.U
 }
 
 const listMembers = `-- name: ListMembers :many
-SELECT u.id AS user_id, u.name, u.email, lm.role, lm.joined_at
+SELECT u.id AS user_id, u.name, u.username, lm.role, lm.joined_at
 FROM list_members lm
 JOIN users u ON u.id = lm.user_id
 WHERE lm.list_id = $1
@@ -302,7 +302,7 @@ ORDER BY lm.joined_at, u.id
 type ListMembersRow struct {
 	UserID   uuid.UUID          `json:"user_id"`
 	Name     string             `json:"name"`
-	Email    string             `json:"email"`
+	Username string             `json:"username"`
 	Role     string             `json:"role"`
 	JoinedAt pgtype.Timestamptz `json:"joined_at"`
 }
@@ -319,7 +319,7 @@ func (q *Queries) ListMembers(ctx context.Context, listID uuid.UUID) ([]ListMemb
 		if err := rows.Scan(
 			&i.UserID,
 			&i.Name,
-			&i.Email,
+			&i.Username,
 			&i.Role,
 			&i.JoinedAt,
 		); err != nil {

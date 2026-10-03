@@ -1,4 +1,4 @@
-// Package auth реализует вход по одноразовому коду из письма, JWT и refresh-токены.
+// Package auth реализует регистрацию и вход по логину и паролю, коды восстановления, JWT и refresh-токены.
 package auth
 
 import (
@@ -9,15 +9,15 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
-	"fmt"
-	"math/big"
-	"net/mail"
+	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -25,24 +25,33 @@ import (
 )
 
 const (
-	CodeTTL         = 10 * time.Minute
-	CodeResendDelay = 60 * time.Second
-	MaxCodeAttempts = 5
 	AccessTokenTTL  = 15 * time.Minute
 	RefreshTokenTTL = 90 * 24 * time.Hour
+
+	MinPasswordLen = 8
+	MaxPasswordLen = 128
+	// После MaxFailedLogins неудач подряд вход в аккаунт блокируется на LockDuration.
+	MaxFailedLogins = 10
+	LockDuration    = 15 * time.Minute
+	RecoveryCodes   = 8
 )
 
 var (
-	ErrInvalidEmail = errors.New("invalid email")
-	ErrTooManyCodes = errors.New("code requested too recently")
-	ErrInvalidCode  = errors.New("invalid or expired code")
-	ErrInvalidToken = errors.New("invalid token")
+	ErrInvalidUsername = errors.New("username must be 3-32 characters: letters, digits, '.', '_' or '-'")
+	ErrWeakPassword    = errors.New("password must be 8-128 characters")
+	ErrUsernameTaken   = errors.New("username is taken")
+	ErrInvalidLogin    = errors.New("invalid username or password")
+	ErrInvalidRecovery = errors.New("invalid username or recovery code")
+	ErrLocked          = errors.New("too many failed attempts, try again later")
+	ErrInvalidToken    = errors.New("invalid token")
 )
 
+var usernameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{3,32}$`)
+
 type User struct {
-	ID    uuid.UUID `json:"id"`
-	Email string    `json:"email"`
-	Name  string    `json:"name"`
+	ID       uuid.UUID `json:"id"`
+	Username string    `json:"username"`
+	Name     string    `json:"name"`
 }
 
 type Tokens struct {
@@ -50,70 +59,48 @@ type Tokens struct {
 	RefreshToken string `json:"refresh_token"`
 	ExpiresIn    int    `json:"expires_in"`
 	User         User   `json:"user"`
+	// RecoveryCodes возвращаются один раз: при регистрации и при выпуске новых кодов.
+	RecoveryCodes []string `json:"recovery_codes,omitempty"`
 }
 
 type Service struct {
 	pool      *pgxpool.Pool
 	q         *store.Queries
-	mailer    Mailer
 	secret    []byte
 	accessTTL time.Duration
 }
 
-func NewService(pool *pgxpool.Pool, mailer Mailer, secret string) *Service {
-	return &Service{pool: pool, q: store.New(pool), mailer: mailer, secret: []byte(secret), accessTTL: AccessTokenTTL}
+func NewService(pool *pgxpool.Pool, secret string) *Service {
+	return &Service{pool: pool, q: store.New(pool), secret: []byte(secret), accessTTL: AccessTokenTTL}
 }
 
-// NormalizeEmail проверяет адрес и приводит его к нижнему регистру.
-func NormalizeEmail(s string) (string, error) {
-	s = strings.TrimSpace(s)
-	addr, err := mail.ParseAddress(s)
-	if err != nil || addr.Address != s || len(s) > 254 || !strings.Contains(s[strings.LastIndex(s, "@"):], ".") {
-		return "", ErrInvalidEmail
-	}
-	return strings.ToLower(s), nil
-}
-
-// RequestCode создаёт и отправляет код. Не раскрывает, есть ли такой пользователь.
-func (s *Service) RequestCode(ctx context.Context, rawEmail string) error {
-	email, err := NormalizeEmail(rawEmail)
-	if err != nil {
-		return err
-	}
-
-	last, err := s.q.LatestLoginCodeCreatedAt(ctx, email)
-	if err == nil && time.Since(last.Time) < CodeResendDelay {
-		return ErrTooManyCodes
-	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return err
-	}
-
-	code, err := newCode()
-	if err != nil {
-		return err
-	}
-	if err := s.q.CreateLoginCode(ctx, store.CreateLoginCodeParams{
-		Email:     email,
-		CodeHash:  s.hashCode(email, code),
-		ExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(CodeTTL), Valid: true},
-	}); err != nil {
-		return err
-	}
-	_ = s.q.DeleteExpiredLoginCodes(ctx)
-
-	if err := s.mailer.SendLoginCode(ctx, email, code); err != nil {
-		return fmt.Errorf("send code: %w", err)
+func validateUsername(u string) error {
+	if !usernameRe.MatchString(u) {
+		return ErrInvalidUsername
 	}
 	return nil
 }
 
-// VerifyCode проверяет код и выдаёт токены. Пользователь создаётся при первом входе.
-func (s *Service) VerifyCode(ctx context.Context, rawEmail, code string) (Tokens, error) {
-	email, err := NormalizeEmail(rawEmail)
-	if err != nil {
-		return Tokens{}, ErrInvalidEmail
+func validatePassword(p string) error {
+	if n := utf8.RuneCountInString(p); n < MinPasswordLen || n > MaxPasswordLen {
+		return ErrWeakPassword
 	}
-	code = strings.TrimSpace(code)
+	return nil
+}
+
+// Register создаёт аккаунт и сразу выдаёт токены и коды восстановления (показываются один раз).
+func (s *Service) Register(ctx context.Context, username, password, name string) (Tokens, error) {
+	username = strings.TrimSpace(username)
+	if err := validateUsername(username); err != nil {
+		return Tokens{}, err
+	}
+	if err := validatePassword(password); err != nil {
+		return Tokens{}, err
+	}
+	hash, err := hashPassword(password)
+	if err != nil {
+		return Tokens{}, err
+	}
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -122,41 +109,266 @@ func (s *Service) VerifyCode(ctx context.Context, rawEmail, code string) (Tokens
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := s.q.WithTx(tx)
 
-	row, err := q.GetActiveLoginCodeForUpdate(ctx, email)
+	u, err := q.CreateUser(ctx, store.CreateUserParams{Username: username, Name: strings.TrimSpace(name)})
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return Tokens{}, ErrUsernameTaken
+		}
+		return Tokens{}, err
+	}
+	if err := q.CreateCredentials(ctx, store.CreateCredentialsParams{UserID: u.ID, PasswordHash: hash}); err != nil {
+		return Tokens{}, err
+	}
+	codes, err := s.newRecoveryCodes(ctx, q, u.ID)
+	if err != nil {
+		return Tokens{}, err
+	}
+	tokens, err := s.issue(ctx, q, User{ID: u.ID, Username: u.Username, Name: u.Name})
+	if err != nil {
+		return Tokens{}, err
+	}
+	tokens.RecoveryCodes = codes
+	return tokens, tx.Commit(ctx)
+}
+
+// LockedError сообщает, на сколько аккаунт заблокирован после серии неудач.
+type LockedError struct{ RetryAfter time.Duration }
+
+func (e LockedError) Error() string { return ErrLocked.Error() }
+func (e LockedError) Unwrap() error { return ErrLocked }
+
+// Login проверяет пароль. Неверный логин и неверный пароль неразличимы ни по ответу, ни по времени.
+func (s *Service) Login(ctx context.Context, username, password string) (Tokens, error) {
+	username = strings.TrimSpace(username)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Tokens{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	q := s.q.WithTx(tx)
+
+	u, err := q.GetUserByUsername(ctx, username)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Tokens{}, ErrInvalidCode
+		_, _ = verifyPassword(password, dummyHash)
+		return Tokens{}, ErrInvalidLogin
 	} else if err != nil {
 		return Tokens{}, err
 	}
-	if row.Attempts >= MaxCodeAttempts {
-		return Tokens{}, ErrInvalidCode
+	cred, err := q.GetCredentialsForUpdate(ctx, u.ID)
+	if err != nil {
+		return Tokens{}, err
 	}
-	if !hmac.Equal([]byte(row.CodeHash), []byte(s.hashCode(email, code))) {
-		// Счётчик попыток должен сохраниться, поэтому коммитим.
-		if err := q.IncrementLoginCodeAttempts(ctx, row.ID); err != nil {
+	if cred.LockedUntil.Valid && cred.LockedUntil.Time.After(time.Now()) {
+		return Tokens{}, LockedError{RetryAfter: time.Until(cred.LockedUntil.Time)}
+	}
+	ok, err := verifyPassword(password, cred.PasswordHash)
+	if err != nil {
+		return Tokens{}, err
+	}
+	if !ok {
+		// Счётчик неудач должен сохраниться, поэтому коммитим.
+		if err := q.RecordLoginFailure(ctx, store.RecordLoginFailureParams{UserID: u.ID, MaxAttempts: MaxFailedLogins, LockSecs: LockDuration.Seconds()}); err != nil {
 			return Tokens{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return Tokens{}, err
 		}
-		return Tokens{}, ErrInvalidCode
+		return Tokens{}, ErrInvalidLogin
 	}
-
-	if err := q.DeleteLoginCodesByEmail(ctx, email); err != nil {
-		return Tokens{}, err
+	if cred.FailedAttempts > 0 || cred.LockedUntil.Valid {
+		if err := q.ResetLoginFailures(ctx, u.ID); err != nil {
+			return Tokens{}, err
+		}
 	}
-	u, err := q.UpsertUserByEmail(ctx, email)
-	if err != nil {
-		return Tokens{}, err
-	}
-	if err := q.InsertEmailIdentity(ctx, store.InsertEmailIdentityParams{UserID: u.ID, Email: email}); err != nil {
-		return Tokens{}, err
-	}
-	tokens, err := s.issue(ctx, q, User{ID: u.ID, Email: u.Email, Name: u.Name})
+	tokens, err := s.issue(ctx, q, User{ID: u.ID, Username: u.Username, Name: u.Name})
 	if err != nil {
 		return Tokens{}, err
 	}
 	return tokens, tx.Commit(ctx)
+}
+
+// Recover задаёт новый пароль по одноразовому коду восстановления. Все прежние сессии завершаются.
+// Неудачные попытки считаются так же, как неверные пароли при входе.
+func (s *Service) Recover(ctx context.Context, username, code, newPassword string) (Tokens, error) {
+	if err := validatePassword(newPassword); err != nil {
+		return Tokens{}, err
+	}
+	username = strings.TrimSpace(username)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Tokens{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	q := s.q.WithTx(tx)
+
+	u, err := q.GetUserByUsername(ctx, username)
+	if errors.Is(err, pgx.ErrNoRows) {
+		_, _ = verifyPassword(code, dummyHash)
+		return Tokens{}, ErrInvalidRecovery
+	} else if err != nil {
+		return Tokens{}, err
+	}
+	cred, err := q.GetCredentialsForUpdate(ctx, u.ID)
+	if err != nil {
+		return Tokens{}, err
+	}
+	if cred.LockedUntil.Valid && cred.LockedUntil.Time.After(time.Now()) {
+		return Tokens{}, LockedError{RetryAfter: time.Until(cred.LockedUntil.Time)}
+	}
+	if _, err := q.UseRecoveryCode(ctx, store.UseRecoveryCodeParams{UserID: u.ID, CodeHash: s.hashRecovery(code)}); errors.Is(err, pgx.ErrNoRows) {
+		if err := q.RecordLoginFailure(ctx, store.RecordLoginFailureParams{UserID: u.ID, MaxAttempts: MaxFailedLogins, LockSecs: LockDuration.Seconds()}); err != nil {
+			return Tokens{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Tokens{}, err
+		}
+		return Tokens{}, ErrInvalidRecovery
+	} else if err != nil {
+		return Tokens{}, err
+	}
+
+	hash, err := hashPassword(newPassword)
+	if err != nil {
+		return Tokens{}, err
+	}
+	if err := q.SetPassword(ctx, store.SetPasswordParams{UserID: u.ID, PasswordHash: hash}); err != nil {
+		return Tokens{}, err
+	}
+	if err := q.RevokeAllUserRefreshTokens(ctx, u.ID); err != nil {
+		return Tokens{}, err
+	}
+	tokens, err := s.issue(ctx, q, User{ID: u.ID, Username: u.Username, Name: u.Name})
+	if err != nil {
+		return Tokens{}, err
+	}
+	return tokens, tx.Commit(ctx)
+}
+
+// ChangePassword меняет пароль, зная старый; остальные сессии завершаются, текущая получает новые токены.
+func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, oldPassword, newPassword string) (Tokens, error) {
+	if err := validatePassword(newPassword); err != nil {
+		return Tokens{}, err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Tokens{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	q := s.q.WithTx(tx)
+
+	cred, err := q.GetCredentialsForUpdate(ctx, userID)
+	if err != nil {
+		return Tokens{}, err
+	}
+	if cred.LockedUntil.Valid && cred.LockedUntil.Time.After(time.Now()) {
+		return Tokens{}, LockedError{RetryAfter: time.Until(cred.LockedUntil.Time)}
+	}
+	ok, err := verifyPassword(oldPassword, cred.PasswordHash)
+	if err != nil {
+		return Tokens{}, err
+	}
+	if !ok {
+		if err := q.RecordLoginFailure(ctx, store.RecordLoginFailureParams{UserID: userID, MaxAttempts: MaxFailedLogins, LockSecs: LockDuration.Seconds()}); err != nil {
+			return Tokens{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Tokens{}, err
+		}
+		return Tokens{}, ErrInvalidLogin
+	}
+	hash, err := hashPassword(newPassword)
+	if err != nil {
+		return Tokens{}, err
+	}
+	if err := q.SetPassword(ctx, store.SetPasswordParams{UserID: userID, PasswordHash: hash}); err != nil {
+		return Tokens{}, err
+	}
+	if err := q.RevokeAllUserRefreshTokens(ctx, userID); err != nil {
+		return Tokens{}, err
+	}
+	u, err := q.GetUser(ctx, userID)
+	if err != nil {
+		return Tokens{}, err
+	}
+	tokens, err := s.issue(ctx, q, User{ID: u.ID, Username: u.Username, Name: u.Name})
+	if err != nil {
+		return Tokens{}, err
+	}
+	return tokens, tx.Commit(ctx)
+}
+
+// NewRecoveryCodes выпускает новый набор кодов (старые перестают действовать); нужен текущий пароль.
+func (s *Service) NewRecoveryCodes(ctx context.Context, userID uuid.UUID, password string) ([]string, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	q := s.q.WithTx(tx)
+
+	cred, err := q.GetCredentialsForUpdate(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	ok, err := verifyPassword(password, cred.PasswordHash)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		if err := q.RecordLoginFailure(ctx, store.RecordLoginFailureParams{UserID: userID, MaxAttempts: MaxFailedLogins, LockSecs: LockDuration.Seconds()}); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return nil, err
+		}
+		return nil, ErrInvalidLogin
+	}
+	codes, err := s.newRecoveryCodes(ctx, q, userID)
+	if err != nil {
+		return nil, err
+	}
+	return codes, tx.Commit(ctx)
+}
+
+// UnusedRecoveryCodes сообщает, сколько кодов восстановления осталось.
+func (s *Service) UnusedRecoveryCodes(ctx context.Context, userID uuid.UUID) (int, error) {
+	n, err := s.q.CountUnusedRecoveryCodes(ctx, userID)
+	return int(n), err
+}
+
+// recoveryAlphabet без похожих символов (0/O, 1/I/L), чтобы код можно было переписать с бумаги.
+const recoveryAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+// newRecoveryCodes заменяет все коды пользователя новыми и возвращает их открытым текстом (один раз).
+func (s *Service) newRecoveryCodes(ctx context.Context, q *store.Queries, userID uuid.UUID) ([]string, error) {
+	if err := q.DeleteRecoveryCodes(ctx, userID); err != nil {
+		return nil, err
+	}
+	codes := make([]string, 0, RecoveryCodes)
+	for len(codes) < RecoveryCodes {
+		raw := make([]byte, 10)
+		if _, err := rand.Read(raw); err != nil {
+			return nil, err
+		}
+		for i, b := range raw {
+			raw[i] = recoveryAlphabet[int(b)%len(recoveryAlphabet)]
+		}
+		code := string(raw[:5]) + "-" + string(raw[5:])
+		if err := q.InsertRecoveryCode(ctx, store.InsertRecoveryCodeParams{UserID: userID, CodeHash: s.hashRecovery(code)}); err != nil {
+			return nil, err
+		}
+		codes = append(codes, code)
+	}
+	return codes, nil
+}
+
+// hashRecovery: HMAC от кода без дефиса и регистра (коды вводят руками).
+func (s *Service) hashRecovery(code string) string {
+	norm := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(code), "-", ""))
+	m := hmac.New(sha256.New, s.secret)
+	m.Write([]byte("recovery:" + norm))
+	return hex.EncodeToString(m.Sum(nil))
 }
 
 // Refresh меняет refresh-токен на новую пару. Повторное использование старого токена
@@ -197,7 +409,7 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (Tokens, err
 	if err := q.RevokeRefreshToken(ctx, row.ID); err != nil {
 		return Tokens{}, err
 	}
-	tokens, err := s.issue(ctx, q, User{ID: u.ID, Email: u.Email, Name: u.Name})
+	tokens, err := s.issue(ctx, q, User{ID: u.ID, Username: u.Username, Name: u.Name})
 	if err != nil {
 		return Tokens{}, err
 	}
@@ -238,7 +450,7 @@ func (s *Service) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
 	if err != nil {
 		return User{}, err
 	}
-	return User{ID: u.ID, Email: u.Email, Name: u.Name}, nil
+	return User{ID: u.ID, Username: u.Username, Name: u.Name}, nil
 }
 
 func (s *Service) UpdateName(ctx context.Context, id uuid.UUID, name string) (User, error) {
@@ -246,7 +458,7 @@ func (s *Service) UpdateName(ctx context.Context, id uuid.UUID, name string) (Us
 	if err != nil {
 		return User{}, err
 	}
-	return User{ID: u.ID, Email: u.Email, Name: u.Name}, nil
+	return User{ID: u.ID, Username: u.Username, Name: u.Name}, nil
 }
 
 // DeleteAccount удаляет аккаунт (требование App Store и Google Play).
@@ -292,20 +504,6 @@ func (s *Service) issue(ctx context.Context, q *store.Queries, u User) (Tokens, 
 		return Tokens{}, err
 	}
 	return Tokens{AccessToken: access, RefreshToken: refresh, ExpiresIn: int(s.accessTTL.Seconds()), User: u}, nil
-}
-
-func newCode() (string, error) {
-	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
-	if err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("%06d", n.Int64()), nil
-}
-
-func (s *Service) hashCode(email, code string) string {
-	m := hmac.New(sha256.New, s.secret)
-	m.Write([]byte(email + ":" + code))
-	return hex.EncodeToString(m.Sum(nil))
 }
 
 func hashToken(t string) string {

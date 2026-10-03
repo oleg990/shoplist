@@ -12,18 +12,28 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createLoginCode = `-- name: CreateLoginCode :exec
-INSERT INTO login_codes (email, code_hash, expires_at) VALUES (lower($3::text), $1, $2)
+const countUnusedRecoveryCodes = `-- name: CountUnusedRecoveryCodes :one
+SELECT count(*) FROM recovery_codes WHERE user_id = $1 AND used_at IS NULL
 `
 
-type CreateLoginCodeParams struct {
-	CodeHash  string             `json:"code_hash"`
-	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
-	Email     string             `json:"email"`
+func (q *Queries) CountUnusedRecoveryCodes(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countUnusedRecoveryCodes, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
-func (q *Queries) CreateLoginCode(ctx context.Context, arg CreateLoginCodeParams) error {
-	_, err := q.db.Exec(ctx, createLoginCode, arg.CodeHash, arg.ExpiresAt, arg.Email)
+const createCredentials = `-- name: CreateCredentials :exec
+INSERT INTO credentials (user_id, password_hash) VALUES ($1, $2)
+`
+
+type CreateCredentialsParams struct {
+	UserID       uuid.UUID `json:"user_id"`
+	PasswordHash string    `json:"password_hash"`
+}
+
+func (q *Queries) CreateCredentials(ctx context.Context, arg CreateCredentialsParams) error {
+	_, err := q.db.Exec(ctx, createCredentials, arg.UserID, arg.PasswordHash)
 	return err
 }
 
@@ -42,21 +52,41 @@ func (q *Queries) CreateRefreshToken(ctx context.Context, arg CreateRefreshToken
 	return err
 }
 
-const deleteExpiredLoginCodes = `-- name: DeleteExpiredLoginCodes :exec
-DELETE FROM login_codes WHERE expires_at < now() - interval '1 day'
+const createUser = `-- name: CreateUser :one
+INSERT INTO users (username, name) VALUES ($1::text, $2::text)
+RETURNING id, username, name, created_at
 `
 
-func (q *Queries) DeleteExpiredLoginCodes(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, deleteExpiredLoginCodes)
-	return err
+type CreateUserParams struct {
+	Username string `json:"username"`
+	Name     string `json:"name"`
 }
 
-const deleteLoginCodesByEmail = `-- name: DeleteLoginCodesByEmail :exec
-DELETE FROM login_codes WHERE email = lower($1::text)
+type CreateUserRow struct {
+	ID        uuid.UUID          `json:"id"`
+	Username  string             `json:"username"`
+	Name      string             `json:"name"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (CreateUserRow, error) {
+	row := q.db.QueryRow(ctx, createUser, arg.Username, arg.Name)
+	var i CreateUserRow
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.Name,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const deleteRecoveryCodes = `-- name: DeleteRecoveryCodes :exec
+DELETE FROM recovery_codes WHERE user_id = $1
 `
 
-func (q *Queries) DeleteLoginCodesByEmail(ctx context.Context, email string) error {
-	_, err := q.db.Exec(ctx, deleteLoginCodesByEmail, email)
+func (q *Queries) DeleteRecoveryCodes(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteRecoveryCodes, userID)
 	return err
 }
 
@@ -69,23 +99,20 @@ func (q *Queries) DeleteUser(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
-const getActiveLoginCodeForUpdate = `-- name: GetActiveLoginCodeForUpdate :one
-SELECT id, code_hash, attempts FROM login_codes
-WHERE email = lower($1::text) AND expires_at > now()
-ORDER BY created_at DESC LIMIT 1
-FOR UPDATE
+const getCredentialsForUpdate = `-- name: GetCredentialsForUpdate :one
+SELECT password_hash, failed_attempts, locked_until FROM credentials WHERE user_id = $1 FOR UPDATE
 `
 
-type GetActiveLoginCodeForUpdateRow struct {
-	ID       int64  `json:"id"`
-	CodeHash string `json:"code_hash"`
-	Attempts int32  `json:"attempts"`
+type GetCredentialsForUpdateRow struct {
+	PasswordHash   string             `json:"password_hash"`
+	FailedAttempts int32              `json:"failed_attempts"`
+	LockedUntil    pgtype.Timestamptz `json:"locked_until"`
 }
 
-func (q *Queries) GetActiveLoginCodeForUpdate(ctx context.Context, email string) (GetActiveLoginCodeForUpdateRow, error) {
-	row := q.db.QueryRow(ctx, getActiveLoginCodeForUpdate, email)
-	var i GetActiveLoginCodeForUpdateRow
-	err := row.Scan(&i.ID, &i.CodeHash, &i.Attempts)
+func (q *Queries) GetCredentialsForUpdate(ctx context.Context, userID uuid.UUID) (GetCredentialsForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, getCredentialsForUpdate, userID)
+	var i GetCredentialsForUpdateRow
+	err := row.Scan(&i.PasswordHash, &i.FailedAttempts, &i.LockedUntil)
 	return i, err
 }
 
@@ -113,12 +140,12 @@ func (q *Queries) GetRefreshTokenForUpdate(ctx context.Context, tokenHash string
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, email, name, created_at FROM users WHERE id = $1 AND deleted_at IS NULL
+SELECT id, username, name, created_at FROM users WHERE id = $1 AND deleted_at IS NULL
 `
 
 type GetUserRow struct {
 	ID        uuid.UUID          `json:"id"`
-	Email     string             `json:"email"`
+	Username  string             `json:"username"`
 	Name      string             `json:"name"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
@@ -128,47 +155,76 @@ func (q *Queries) GetUser(ctx context.Context, id uuid.UUID) (GetUserRow, error)
 	var i GetUserRow
 	err := row.Scan(
 		&i.ID,
-		&i.Email,
+		&i.Username,
 		&i.Name,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
-const incrementLoginCodeAttempts = `-- name: IncrementLoginCodeAttempts :exec
-UPDATE login_codes SET attempts = attempts + 1 WHERE id = $1
+const getUserByUsername = `-- name: GetUserByUsername :one
+SELECT id, username, name, created_at FROM users WHERE lower(username) = lower($1::text) AND deleted_at IS NULL
 `
 
-func (q *Queries) IncrementLoginCodeAttempts(ctx context.Context, id int64) error {
-	_, err := q.db.Exec(ctx, incrementLoginCodeAttempts, id)
+type GetUserByUsernameRow struct {
+	ID        uuid.UUID          `json:"id"`
+	Username  string             `json:"username"`
+	Name      string             `json:"name"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) GetUserByUsername(ctx context.Context, username string) (GetUserByUsernameRow, error) {
+	row := q.db.QueryRow(ctx, getUserByUsername, username)
+	var i GetUserByUsernameRow
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.Name,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertRecoveryCode = `-- name: InsertRecoveryCode :exec
+INSERT INTO recovery_codes (user_id, code_hash) VALUES ($1, $2)
+`
+
+type InsertRecoveryCodeParams struct {
+	UserID   uuid.UUID `json:"user_id"`
+	CodeHash string    `json:"code_hash"`
+}
+
+func (q *Queries) InsertRecoveryCode(ctx context.Context, arg InsertRecoveryCodeParams) error {
+	_, err := q.db.Exec(ctx, insertRecoveryCode, arg.UserID, arg.CodeHash)
 	return err
 }
 
-const insertEmailIdentity = `-- name: InsertEmailIdentity :exec
-INSERT INTO auth_identities (user_id, provider, provider_uid)
-VALUES ($1, 'email', lower($2::text))
-ON CONFLICT DO NOTHING
+const recordLoginFailure = `-- name: RecordLoginFailure :exec
+UPDATE credentials SET
+    failed_attempts = CASE WHEN failed_attempts + 1 >= $1::int THEN 0 ELSE failed_attempts + 1 END,
+    locked_until = CASE WHEN failed_attempts + 1 >= $1::int THEN now() + make_interval(secs => $2::float8) ELSE locked_until END
+WHERE user_id = $3
 `
 
-type InsertEmailIdentityParams struct {
-	UserID uuid.UUID `json:"user_id"`
-	Email  string    `json:"email"`
+type RecordLoginFailureParams struct {
+	MaxAttempts int32     `json:"max_attempts"`
+	LockSecs    float64   `json:"lock_secs"`
+	UserID      uuid.UUID `json:"user_id"`
 }
 
-func (q *Queries) InsertEmailIdentity(ctx context.Context, arg InsertEmailIdentityParams) error {
-	_, err := q.db.Exec(ctx, insertEmailIdentity, arg.UserID, arg.Email)
+// После max_attempts подряд неудач вход блокируется на lock_for; счётчик сбрасывается при блокировке.
+func (q *Queries) RecordLoginFailure(ctx context.Context, arg RecordLoginFailureParams) error {
+	_, err := q.db.Exec(ctx, recordLoginFailure, arg.MaxAttempts, arg.LockSecs, arg.UserID)
 	return err
 }
 
-const latestLoginCodeCreatedAt = `-- name: LatestLoginCodeCreatedAt :one
-SELECT created_at FROM login_codes WHERE email = lower($1::text) ORDER BY created_at DESC LIMIT 1
+const resetLoginFailures = `-- name: ResetLoginFailures :exec
+UPDATE credentials SET failed_attempts = 0, locked_until = NULL WHERE user_id = $1
 `
 
-func (q *Queries) LatestLoginCodeCreatedAt(ctx context.Context, email string) (pgtype.Timestamptz, error) {
-	row := q.db.QueryRow(ctx, latestLoginCodeCreatedAt, email)
-	var created_at pgtype.Timestamptz
-	err := row.Scan(&created_at)
-	return created_at, err
+func (q *Queries) ResetLoginFailures(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, resetLoginFailures, userID)
+	return err
 }
 
 const revokeAllUserRefreshTokens = `-- name: RevokeAllUserRefreshTokens :exec
@@ -198,6 +254,20 @@ func (q *Queries) RevokeRefreshTokenByHash(ctx context.Context, tokenHash string
 	return err
 }
 
+const setPassword = `-- name: SetPassword :exec
+UPDATE credentials SET password_hash = $2, failed_attempts = 0, locked_until = NULL, updated_at = now() WHERE user_id = $1
+`
+
+type SetPasswordParams struct {
+	UserID       uuid.UUID `json:"user_id"`
+	PasswordHash string    `json:"password_hash"`
+}
+
+func (q *Queries) SetPassword(ctx context.Context, arg SetPasswordParams) error {
+	_, err := q.db.Exec(ctx, setPassword, arg.UserID, arg.PasswordHash)
+	return err
+}
+
 const transferOwnedLists = `-- name: TransferOwnedLists :exec
 WITH new_owner AS (
     SELECT DISTINCT ON (lm.list_id) lm.list_id, lm.user_id
@@ -222,7 +292,7 @@ func (q *Queries) TransferOwnedLists(ctx context.Context, ownerID uuid.UUID) err
 
 const updateUserName = `-- name: UpdateUserName :one
 UPDATE users SET name = $2 WHERE id = $1 AND deleted_at IS NULL
-RETURNING id, email, name, created_at
+RETURNING id, username, name, created_at
 `
 
 type UpdateUserNameParams struct {
@@ -232,7 +302,7 @@ type UpdateUserNameParams struct {
 
 type UpdateUserNameRow struct {
 	ID        uuid.UUID          `json:"id"`
-	Email     string             `json:"email"`
+	Username  string             `json:"username"`
 	Name      string             `json:"name"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
@@ -242,34 +312,28 @@ func (q *Queries) UpdateUserName(ctx context.Context, arg UpdateUserNameParams) 
 	var i UpdateUserNameRow
 	err := row.Scan(
 		&i.ID,
-		&i.Email,
+		&i.Username,
 		&i.Name,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
-const upsertUserByEmail = `-- name: UpsertUserByEmail :one
-INSERT INTO users (email) VALUES (lower($1::text))
-ON CONFLICT ((lower(email))) WHERE deleted_at IS NULL DO UPDATE SET email = users.email
-RETURNING id, email, name, created_at
+const useRecoveryCode = `-- name: UseRecoveryCode :one
+UPDATE recovery_codes SET used_at = now()
+WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL
+RETURNING id
 `
 
-type UpsertUserByEmailRow struct {
-	ID        uuid.UUID          `json:"id"`
-	Email     string             `json:"email"`
-	Name      string             `json:"name"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
+type UseRecoveryCodeParams struct {
+	UserID   uuid.UUID `json:"user_id"`
+	CodeHash string    `json:"code_hash"`
 }
 
-func (q *Queries) UpsertUserByEmail(ctx context.Context, email string) (UpsertUserByEmailRow, error) {
-	row := q.db.QueryRow(ctx, upsertUserByEmail, email)
-	var i UpsertUserByEmailRow
-	err := row.Scan(
-		&i.ID,
-		&i.Email,
-		&i.Name,
-		&i.CreatedAt,
-	)
-	return i, err
+// Помечает код использованным; пусто, если кода нет или он уже использован.
+func (q *Queries) UseRecoveryCode(ctx context.Context, arg UseRecoveryCodeParams) (int64, error) {
+	row := q.db.QueryRow(ctx, useRecoveryCode, arg.UserID, arg.CodeHash)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }

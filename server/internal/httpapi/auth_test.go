@@ -4,21 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 )
 
 type tokens struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int    `json:"expires_in"`
-	User         struct {
-		ID    string `json:"id"`
-		Email string `json:"email"`
-		Name  string `json:"name"`
+	AccessToken   string   `json:"access_token"`
+	RefreshToken  string   `json:"refresh_token"`
+	ExpiresIn     int      `json:"expires_in"`
+	RecoveryCodes []string `json:"recovery_codes"`
+	User          struct {
+		ID       string `json:"id"`
+		Username string `json:"username"`
+		Name     string `json:"name"`
 	} `json:"user"`
 }
 
@@ -50,31 +51,42 @@ func call(t *testing.T, method, url, bearer string, body any, out any) int {
 	return resp.StatusCode
 }
 
-func uniqueEmail() string { return fmt.Sprintf("user-%s@example.com", uuid.NewString()[:8]) }
+func uniqueName() string { return "user-" + uuid.NewString()[:8] }
 
-func login(t *testing.T, srv string, m *captureMailer, email string) tokens {
+const testPassword = "correct horse battery"
+
+// login регистрирует нового пользователя и возвращает его токены.
+func login(t *testing.T, srv, username string) tokens {
 	t.Helper()
-	if code := call(t, "POST", srv+"/api/v1/auth/request-code", "", map[string]string{"email": email}, nil); code != http.StatusNoContent {
-		t.Fatalf("request-code status = %d", code)
-	}
 	var tk tokens
-	if code := call(t, "POST", srv+"/api/v1/auth/verify", "", map[string]string{"email": email, "code": m.code(email)}, &tk); code != http.StatusOK {
-		t.Fatalf("verify status = %d", code)
+	body := map[string]string{"username": username, "password": testPassword, "name": "Тест"}
+	if code := call(t, "POST", srv+"/api/v1/auth/register", "", body, &tk); code != http.StatusCreated {
+		t.Fatalf("register status = %d", code)
 	}
 	return tk
 }
 
-func TestLoginFlow(t *testing.T) {
-	srv, mailer, _ := newTestEnv(t)
-	email := uniqueEmail()
+func TestRegisterAndLogin(t *testing.T) {
+	srv, _ := newTestEnv(t)
+	name := uniqueName()
 
-	tk := login(t, srv.URL, mailer, email)
-	if tk.AccessToken == "" || tk.RefreshToken == "" || tk.User.Email != email || tk.ExpiresIn != 900 {
+	tk := login(t, srv.URL, name)
+	if tk.AccessToken == "" || tk.RefreshToken == "" || tk.User.Username != name || tk.ExpiresIn != 900 || len(tk.RecoveryCodes) != 8 {
 		t.Fatalf("unexpected tokens: %+v", tk)
 	}
 
-	var me struct{ Email, Name string }
-	if code := call(t, "GET", srv.URL+"/api/v1/me", tk.AccessToken, nil, &me); code != http.StatusOK || me.Email != email {
+	var again tokens
+	// Имя пользователя нечувствительно к регистру.
+	creds := map[string]string{"username": strings.ToUpper(name), "password": testPassword}
+	if code := call(t, "POST", srv.URL+"/api/v1/auth/login", "", creds, &again); code != http.StatusOK || again.User.ID != tk.User.ID {
+		t.Fatalf("login: status=%d tokens=%+v", code, again)
+	}
+	if len(again.RecoveryCodes) != 0 {
+		t.Fatal("login must not return recovery codes")
+	}
+
+	var me struct{ Username, Name string }
+	if code := call(t, "GET", srv.URL+"/api/v1/me", tk.AccessToken, nil, &me); code != http.StatusOK || me.Username != name {
 		t.Fatalf("me: status=%d body=%+v", code, me)
 	}
 	if code := call(t, "PATCH", srv.URL+"/api/v1/me", tk.AccessToken, map[string]string{"name": "Оля"}, &me); code != http.StatusOK || me.Name != "Оля" {
@@ -82,61 +94,117 @@ func TestLoginFlow(t *testing.T) {
 	}
 }
 
-func TestSameEmailSameAccount(t *testing.T) {
-	srv, mailer, pool := newTestEnv(t)
-	email := uniqueEmail()
-	first := login(t, srv.URL, mailer, email)
-
-	// Пауза между кодами здесь не нужна: сбрасываем её, удалив использованные коды.
-	if _, err := pool.Exec(context.Background(), `DELETE FROM login_codes WHERE email = $1`, email); err != nil {
-		t.Fatal(err)
+func TestRegisterValidation(t *testing.T) {
+	srv, _ := newTestEnv(t)
+	url := srv.URL + "/api/v1/auth/register"
+	for _, c := range []struct{ user, pass string }{
+		{"", testPassword}, {"ab", testPassword}, {"имя-кириллицей", testPassword},
+		{"has space", testPassword}, {strings.Repeat("a", 33), testPassword},
+		{uniqueName(), "short"}, {uniqueName(), strings.Repeat("x", 129)},
+	} {
+		if code := call(t, "POST", url, "", map[string]string{"username": c.user, "password": c.pass}, nil); code != http.StatusBadRequest {
+			t.Errorf("%q/%d chars: status = %d, want 400", c.user, len(c.pass), code)
+		}
 	}
-	second := login(t, srv.URL, mailer, email)
-	if second.User.ID != first.User.ID {
-		t.Fatalf("second login created another user: %s vs %s", second.User.ID, first.User.ID)
+	name := uniqueName()
+	login(t, srv.URL, name)
+	if code := call(t, "POST", url, "", map[string]string{"username": strings.ToUpper(name), "password": testPassword}, nil); code != http.StatusConflict {
+		t.Fatalf("duplicate username status = %d, want 409", code)
 	}
 }
 
-func TestRequestCodeValidationAndThrottle(t *testing.T) {
-	srv, _, _ := newTestEnv(t)
-	for _, bad := range []string{"", "not-an-email", "a@b", "Имя <a@b.co>"} {
-		if code := call(t, "POST", srv.URL+"/api/v1/auth/request-code", "", map[string]string{"email": bad}, nil); code != http.StatusBadRequest {
-			t.Errorf("email %q: status = %d, want 400", bad, code)
+func TestLoginWrongPasswordAndLockout(t *testing.T) {
+	srv, _ := newTestEnv(t)
+	name := uniqueName()
+	login(t, srv.URL, name)
+	url := srv.URL + "/api/v1/auth/login"
+
+	if code := call(t, "POST", url, "", map[string]string{"username": "nobody-" + name, "password": testPassword}, nil); code != http.StatusUnauthorized {
+		t.Fatalf("unknown user status = %d, want 401", code)
+	}
+	for i := 0; i < 10; i++ {
+		if code := call(t, "POST", url, "", map[string]string{"username": name, "password": "wrong password"}, nil); code != http.StatusUnauthorized {
+			t.Fatalf("attempt %d: status = %d, want 401", i, code)
 		}
 	}
-
-	email := uniqueEmail()
-	if code := call(t, "POST", srv.URL+"/api/v1/auth/request-code", "", map[string]string{"email": email}, nil); code != http.StatusNoContent {
-		t.Fatalf("first request status = %d", code)
-	}
-	if code := call(t, "POST", srv.URL+"/api/v1/auth/request-code", "", map[string]string{"email": email}, nil); code != http.StatusTooManyRequests {
-		t.Fatalf("second request status = %d, want 429", code)
+	// После десяти ошибок подряд даже верный пароль не принимается.
+	if code := call(t, "POST", url, "", map[string]string{"username": name, "password": testPassword}, nil); code != http.StatusTooManyRequests {
+		t.Fatalf("login after lockout: status = %d, want 429", code)
 	}
 }
 
-func TestWrongCodeLocksAfterFiveAttempts(t *testing.T) {
-	srv, mailer, _ := newTestEnv(t)
-	email := uniqueEmail()
-	call(t, "POST", srv.URL+"/api/v1/auth/request-code", "", map[string]string{"email": email}, nil)
-	right := mailer.code(email)
-	wrong := "000000"
-	if right == wrong {
-		wrong = "111111"
+func TestRecoverWithCode(t *testing.T) {
+	srv, _ := newTestEnv(t)
+	name := uniqueName()
+	tk := login(t, srv.URL, name)
+	url := srv.URL + "/api/v1/auth/recover"
+	newPass := "brand new password"
+
+	if code := call(t, "POST", url, "", map[string]string{"username": name, "code": "AAAAA-AAAAA", "new_password": newPass}, nil); code != http.StatusUnauthorized {
+		t.Fatalf("wrong code status = %d, want 401", code)
 	}
-	for i := 0; i < 5; i++ {
-		if code := call(t, "POST", srv.URL+"/api/v1/auth/verify", "", map[string]string{"email": email, "code": wrong}, nil); code != http.StatusUnauthorized {
-			t.Fatalf("attempt %d: status = %d", i, code)
-		}
+	var rec tokens
+	body := map[string]string{"username": name, "code": tk.RecoveryCodes[0], "new_password": newPass}
+	if code := call(t, "POST", url, "", body, &rec); code != http.StatusOK || rec.User.ID != tk.User.ID {
+		t.Fatalf("recover: status=%d tokens=%+v", code, rec)
 	}
-	// После пяти ошибок даже верный код не принимается.
-	if code := call(t, "POST", srv.URL+"/api/v1/auth/verify", "", map[string]string{"email": email, "code": right}, nil); code != http.StatusUnauthorized {
-		t.Fatalf("right code after lockout: status = %d, want 401", code)
+	// Код одноразовый.
+	if code := call(t, "POST", url, "", body, nil); code != http.StatusUnauthorized {
+		t.Fatalf("reused code status = %d, want 401", code)
+	}
+	// Старые сессии отозваны, старый пароль не подходит, новый подходит.
+	if code := call(t, "POST", srv.URL+"/api/v1/auth/refresh", "", map[string]string{"refresh_token": tk.RefreshToken}, nil); code != http.StatusUnauthorized {
+		t.Fatalf("old refresh after recover status = %d, want 401", code)
+	}
+	login := srv.URL + "/api/v1/auth/login"
+	if code := call(t, "POST", login, "", map[string]string{"username": name, "password": testPassword}, nil); code != http.StatusUnauthorized {
+		t.Fatalf("old password status = %d, want 401", code)
+	}
+	if code := call(t, "POST", login, "", map[string]string{"username": name, "password": newPass}, nil); code != http.StatusOK {
+		t.Fatalf("new password status = %d, want 200", code)
+	}
+}
+
+func TestChangePasswordAndRecoveryCodes(t *testing.T) {
+	srv, _ := newTestEnv(t)
+	name := uniqueName()
+	tk := login(t, srv.URL, name)
+	base := srv.URL + "/api/v1/me"
+
+	if code := call(t, "PUT", base+"/password", tk.AccessToken, map[string]string{"old_password": "nope nope nope", "new_password": "another password"}, nil); code != http.StatusUnauthorized {
+		t.Fatalf("wrong old password status = %d, want 401", code)
+	}
+	var changed tokens
+	if code := call(t, "PUT", base+"/password", tk.AccessToken, map[string]string{"old_password": testPassword, "new_password": "another password"}, &changed); code != http.StatusOK || changed.RefreshToken == "" {
+		t.Fatalf("change password: status=%d tokens=%+v", code, changed)
+	}
+	if code := call(t, "POST", srv.URL+"/api/v1/auth/refresh", "", map[string]string{"refresh_token": tk.RefreshToken}, nil); code != http.StatusUnauthorized {
+		t.Fatalf("old refresh after change status = %d, want 401", code)
+	}
+
+	var cnt struct{ Unused int }
+	if code := call(t, "GET", base+"/recovery-codes", changed.AccessToken, nil, &cnt); code != http.StatusOK || cnt.Unused != 8 {
+		t.Fatalf("count: status=%d %+v", code, cnt)
+	}
+	if code := call(t, "POST", base+"/recovery-codes", changed.AccessToken, map[string]string{"password": testPassword}, nil); code != http.StatusUnauthorized {
+		t.Fatalf("regenerate with wrong password status = %d, want 401", code)
+	}
+	var fresh struct {
+		RecoveryCodes []string `json:"recovery_codes"`
+	}
+	if code := call(t, "POST", base+"/recovery-codes", changed.AccessToken, map[string]string{"password": "another password"}, &fresh); code != http.StatusOK || len(fresh.RecoveryCodes) != 8 {
+		t.Fatalf("regenerate: status=%d %+v", code, fresh)
+	}
+	// Старые коды после перевыпуска недействительны.
+	body := map[string]string{"username": name, "code": tk.RecoveryCodes[1], "new_password": "yet another pass"}
+	if code := call(t, "POST", srv.URL+"/api/v1/auth/recover", "", body, nil); code != http.StatusUnauthorized {
+		t.Fatalf("old code after regenerate status = %d, want 401", code)
 	}
 }
 
 func TestRefreshRotationAndReuseDetection(t *testing.T) {
-	srv, mailer, _ := newTestEnv(t)
-	tk := login(t, srv.URL, mailer, uniqueEmail())
+	srv, _ := newTestEnv(t)
+	tk := login(t, srv.URL, uniqueName())
 
 	var next tokens
 	if code := call(t, "POST", srv.URL+"/api/v1/auth/refresh", "", map[string]string{"refresh_token": tk.RefreshToken}, &next); code != http.StatusOK {
@@ -156,8 +224,8 @@ func TestRefreshRotationAndReuseDetection(t *testing.T) {
 }
 
 func TestLogoutRevokesRefreshToken(t *testing.T) {
-	srv, mailer, _ := newTestEnv(t)
-	tk := login(t, srv.URL, mailer, uniqueEmail())
+	srv, _ := newTestEnv(t)
+	tk := login(t, srv.URL, uniqueName())
 	if code := call(t, "POST", srv.URL+"/api/v1/auth/logout", "", map[string]string{"refresh_token": tk.RefreshToken}, nil); code != http.StatusNoContent {
 		t.Fatalf("logout status = %d", code)
 	}
@@ -167,7 +235,7 @@ func TestLogoutRevokesRefreshToken(t *testing.T) {
 }
 
 func TestProtectedRoutesNeedValidToken(t *testing.T) {
-	srv, _, _ := newTestEnv(t)
+	srv, _ := newTestEnv(t)
 	for _, token := range []string{"", "garbage", "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ4In0."} {
 		if code := call(t, "GET", srv.URL+"/api/v1/me", token, nil, nil); code != http.StatusUnauthorized {
 			t.Errorf("token %q: status = %d, want 401", token, code)
@@ -176,9 +244,9 @@ func TestProtectedRoutesNeedValidToken(t *testing.T) {
 }
 
 func TestDeleteAccountTransfersSharedLists(t *testing.T) {
-	srv, mailer, pool := newTestEnv(t)
-	owner := login(t, srv.URL, mailer, uniqueEmail())
-	member := login(t, srv.URL, mailer, uniqueEmail())
+	srv, pool := newTestEnv(t)
+	owner := login(t, srv.URL, uniqueName())
+	member := login(t, srv.URL, uniqueName())
 
 	ctx := context.Background()
 	var shared, solo uuid.UUID

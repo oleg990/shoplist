@@ -198,7 +198,7 @@ func (s *Service) Members(ctx context.Context, userID, listID uuid.UUID) ([]Memb
 	for _, r := range rows {
 		name := strings.TrimSpace(r.Name)
 		if name == "" {
-			name = maskEmail(r.Email)
+			name = r.Username
 		}
 		out = append(out, Member{UserID: r.UserID, Name: name, Role: r.Role, JoinedAt: r.JoinedAt.Time})
 	}
@@ -332,14 +332,4 @@ func newInviteCode() (string, error) {
 		}
 	}
 	return string(out), nil
-}
-
-// maskEmail превращает "olga@gmail.com" в "o***@gmail.com": участники видят друг друга, но не чужие адреса.
-func maskEmail(email string) string {
-	local, domain, ok := strings.Cut(email, "@")
-	if !ok || local == "" {
-		return "***"
-	}
-	r := []rune(local)
-	return string(r[0]) + "***@" + domain
 }

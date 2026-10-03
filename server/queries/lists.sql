@@ -22,7 +22,7 @@ JOIN list_members lm ON lm.list_id = l.id AND lm.user_id = sqlc.arg(user_id)
 WHERE l.id = sqlc.arg(list_id) AND l.deleted_at IS NULL;
 
 -- name: ListMembers :many
-SELECT u.id AS user_id, u.name, u.email, lm.role, lm.joined_at
+SELECT u.id AS user_id, u.name, u.username, lm.role, lm.joined_at
 FROM list_members lm
 JOIN users u ON u.id = lm.user_id
 WHERE lm.list_id = $1
