@@ -1,12 +1,16 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { api, setSignedOutHandler, type User } from '../api';
+import { api, setSignedOutHandler, type Tokens, type User } from '../api';
 import { unregisterPush } from '../push/register';
 import { clearLocalData } from '../sync/localData';
 
 type AuthState = {
   loading: boolean;
   user: User | null;
-  signIn: (email: string, code: string) => Promise<void>;
+  signIn: (username: string, password: string) => Promise<void>;
+  recover: (username: string, code: string, newPassword: string) => Promise<void>;
+  // Создаёт аккаунт, но не входит: экран показывает коды восстановления и затем зовёт finishRegistration.
+  register: (username: string, password: string, name: string) => Promise<Tokens>;
+  finishRegistration: (tokens: Tokens) => Promise<void>;
   signOut: () => Promise<void>;
   deleteAccount: () => Promise<void>;
 };
@@ -35,8 +39,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const signIn = useCallback(async (email: string, code: string) => {
-    setUser(await api.verifyCode(email, code));
+  const signIn = useCallback(async (username: string, password: string) => {
+    setUser(await api.login(username, password));
+  }, []);
+
+  const recover = useCallback(async (username: string, code: string, newPassword: string) => {
+    setUser(await api.recover(username, code, newPassword));
+  }, []);
+
+  const register = useCallback((username: string, password: string, name: string) => api.register(username, password, name), []);
+
+  const finishRegistration = useCallback(async (tokens: Tokens) => {
+    await api.setSession(tokens);
+    setUser(tokens.user);
   }, []);
 
   const signOut = useCallback(async () => {
@@ -55,7 +70,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await clearLocalData();
   }, []);
 
-  const value = useMemo(() => ({ loading, user, signIn, signOut, deleteAccount }), [loading, user, signIn, signOut, deleteAccount]);
+  const value = useMemo(
+    () => ({ loading, user, signIn, recover, register, finishRegistration, signOut, deleteAccount }),
+    [loading, user, signIn, recover, register, finishRegistration, signOut, deleteAccount],
+  );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

@@ -39,7 +39,6 @@ type listEnv struct {
 	srv          string
 	owner, guest tokens
 	listID       string
-	mailer       *captureMailer
 	pool         *pgxpool.Pool
 	expo         *fakeExpo
 }
@@ -47,9 +46,9 @@ type listEnv struct {
 func newListEnv(t *testing.T) listEnv {
 	t.Helper()
 	env := buildEnv(t, 0)
-	e := listEnv{srv: env.srv.URL, mailer: env.mailer, pool: env.pool, expo: env.expo}
-	e.owner = login(t, e.srv, e.mailer, uniqueEmail())
-	e.guest = login(t, e.srv, e.mailer, uniqueEmail())
+	e := listEnv{srv: env.srv.URL, pool: env.pool, expo: env.expo}
+	e.owner = login(t, e.srv, uniqueName())
+	e.guest = login(t, e.srv, uniqueName())
 	l := mustCreateList(t, e.srv, e.owner, "Продукты")
 	e.listID = l.ID
 	inv := mustInvite(t, e.srv, e.owner, l.ID, nil)
@@ -185,7 +184,7 @@ func TestPutIsIdempotentAndReplaces(t *testing.T) {
 
 func TestStrangerAndForeignItemID(t *testing.T) {
 	e := newListEnv(t)
-	stranger := login(t, e.srv, e.mailer, uniqueEmail())
+	stranger := login(t, e.srv, uniqueName())
 	_, id := e.put(t, e.owner, map[string]any{"name": "Чай"})
 
 	// Посторонний ничего не видит и не меняет: везде 404.

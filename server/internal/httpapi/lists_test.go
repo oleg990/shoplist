@@ -42,9 +42,9 @@ func mustInvite(t *testing.T, srv string, who tokens, listID string, body any) i
 }
 
 func TestCreateAndListLists(t *testing.T) {
-	srv, mailer, _ := newTestEnv(t)
-	owner := login(t, srv.URL, mailer, uniqueEmail())
-	other := login(t, srv.URL, mailer, uniqueEmail())
+	srv, _ := newTestEnv(t)
+	owner := login(t, srv.URL, uniqueName())
+	other := login(t, srv.URL, uniqueName())
 
 	l := mustCreateList(t, srv.URL, owner, "  Продукты  ")
 	if l.Title != "Продукты" || l.Role != "owner" || l.MemberCount != 1 || l.OwnerID != owner.User.ID {
@@ -70,8 +70,8 @@ func TestCreateAndListLists(t *testing.T) {
 }
 
 func TestListTitleValidationAndAuth(t *testing.T) {
-	srv, mailer, _ := newTestEnv(t)
-	owner := login(t, srv.URL, mailer, uniqueEmail())
+	srv, _ := newTestEnv(t)
+	owner := login(t, srv.URL, uniqueName())
 	tooLong := strings.Repeat("я", 101)
 	for _, title := range []string{"", "   ", tooLong} {
 		if code := call(t, "POST", srv.URL+"/api/v1/lists", owner.AccessToken, map[string]string{"title": title}, nil); code != http.StatusBadRequest {
@@ -87,9 +87,9 @@ func TestListTitleValidationAndAuth(t *testing.T) {
 }
 
 func TestInviteJoinAndMembers(t *testing.T) {
-	srv, mailer, _ := newTestEnv(t)
-	owner := login(t, srv.URL, mailer, uniqueEmail())
-	guest := login(t, srv.URL, mailer, uniqueEmail())
+	srv, _ := newTestEnv(t)
+	owner := login(t, srv.URL, uniqueName())
+	guest := login(t, srv.URL, uniqueName())
 	l := mustCreateList(t, srv.URL, owner, "Дача")
 
 	inv := mustInvite(t, srv.URL, owner, l.ID, nil) // тело необязательно
@@ -117,9 +117,8 @@ func TestInviteJoinAndMembers(t *testing.T) {
 		t.Fatalf("members: status=%d %+v", code, members)
 	}
 	for _, m := range members.Items {
-		// Чужие email не раскрываются: имя пустое, поэтому приходит маска вида «u***@example.com».
-		if len(m.Name) < 5 || m.Name[1:4] != "***" {
-			t.Errorf("member name %q is not masked", m.Name)
+		if m.Name != "Тест" {
+			t.Errorf("member name = %q, want %q", m.Name, "Тест")
 		}
 	}
 
@@ -134,15 +133,15 @@ func TestInviteJoinAndMembers(t *testing.T) {
 func lower(s string) string { return strings.ToLower(s) }
 
 func TestInviteMaxUsesHoldsUnderConcurrency(t *testing.T) {
-	srv, mailer, _ := newTestEnv(t)
-	owner := login(t, srv.URL, mailer, uniqueEmail())
+	srv, _ := newTestEnv(t)
+	owner := login(t, srv.URL, uniqueName())
 	l := mustCreateList(t, srv.URL, owner, "Гонка")
 	inv := mustInvite(t, srv.URL, owner, l.ID, map[string]int{"max_uses": 1})
 
 	const guests = 6
 	users := make([]tokens, guests)
 	for i := range users {
-		users[i] = login(t, srv.URL, mailer, uniqueEmail())
+		users[i] = login(t, srv.URL, uniqueName())
 	}
 	var (
 		wg sync.WaitGroup
@@ -167,10 +166,10 @@ func TestInviteMaxUsesHoldsUnderConcurrency(t *testing.T) {
 }
 
 func TestInviteLimitsExpiryAndGarbage(t *testing.T) {
-	srv, mailer, pool := newTestEnv(t)
-	owner := login(t, srv.URL, mailer, uniqueEmail())
-	a := login(t, srv.URL, mailer, uniqueEmail())
-	b := login(t, srv.URL, mailer, uniqueEmail())
+	srv, pool := newTestEnv(t)
+	owner := login(t, srv.URL, uniqueName())
+	a := login(t, srv.URL, uniqueName())
+	b := login(t, srv.URL, uniqueName())
 	l := mustCreateList(t, srv.URL, owner, "Лимиты")
 
 	one := mustInvite(t, srv.URL, owner, l.ID, map[string]int{"max_uses": 1})
@@ -196,9 +195,9 @@ func TestInviteLimitsExpiryAndGarbage(t *testing.T) {
 }
 
 func TestOnlyOwnerRenamesAndDeletes(t *testing.T) {
-	srv, mailer, _ := newTestEnv(t)
-	owner := login(t, srv.URL, mailer, uniqueEmail())
-	guest := login(t, srv.URL, mailer, uniqueEmail())
+	srv, _ := newTestEnv(t)
+	owner := login(t, srv.URL, uniqueName())
+	guest := login(t, srv.URL, uniqueName())
 	l := mustCreateList(t, srv.URL, owner, "Старое")
 	inv := mustInvite(t, srv.URL, owner, l.ID, nil)
 	call(t, "POST", srv.URL+"/api/v1/invites/accept", guest.AccessToken, map[string]string{"code": inv.Code}, nil)
@@ -216,7 +215,7 @@ func TestOnlyOwnerRenamesAndDeletes(t *testing.T) {
 	}
 
 	// Участник может создать приглашение, посторонний нет.
-	stranger := login(t, srv.URL, mailer, uniqueEmail())
+	stranger := login(t, srv.URL, uniqueName())
 	if code := call(t, "POST", srv.URL+"/api/v1/lists/"+l.ID+"/invites", stranger.AccessToken, nil, nil); code != http.StatusNotFound {
 		t.Fatalf("stranger invite status = %d, want 404", code)
 	}
@@ -237,10 +236,10 @@ func TestOnlyOwnerRenamesAndDeletes(t *testing.T) {
 }
 
 func TestLeaveAndRemoveMembers(t *testing.T) {
-	srv, mailer, _ := newTestEnv(t)
-	owner := login(t, srv.URL, mailer, uniqueEmail())
-	a := login(t, srv.URL, mailer, uniqueEmail())
-	b := login(t, srv.URL, mailer, uniqueEmail())
+	srv, _ := newTestEnv(t)
+	owner := login(t, srv.URL, uniqueName())
+	a := login(t, srv.URL, uniqueName())
+	b := login(t, srv.URL, uniqueName())
 	l := mustCreateList(t, srv.URL, owner, "Семья")
 	inv := mustInvite(t, srv.URL, owner, l.ID, nil)
 	for _, tk := range []tokens{a, b} {

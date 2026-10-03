@@ -61,8 +61,9 @@ func NewRouter(db Pinger, queries *store.Queries, authSvc *auth.Service, listsSv
 			r.Get("/catalog/search", a.searchCatalog)
 			r.Get("/categories", a.listCategories)
 
-			r.With(authLimit).Post("/auth/request-code", a.requestCode)
-			r.With(authLimit).Post("/auth/verify", a.verifyCode)
+			r.With(authLimit).Post("/auth/register", a.register)
+			r.With(authLimit).Post("/auth/login", a.login)
+			r.With(authLimit).Post("/auth/recover", a.recoverAccount)
 			r.With(authLimit).Post("/auth/refresh", a.refresh)
 			r.With(authLimit).Post("/auth/logout", a.logout)
 
@@ -71,6 +72,9 @@ func NewRouter(db Pinger, queries *store.Queries, authSvc *auth.Service, listsSv
 				r.Get("/me", a.me)
 				r.Patch("/me", a.updateMe)
 				r.Delete("/me", a.deleteMe)
+				r.Put("/me/password", a.changePassword)
+				r.Get("/me/recovery-codes", a.recoveryCodesCount)
+				r.Post("/me/recovery-codes", a.regenerateRecoveryCodes)
 
 				r.Put("/devices", a.registerDevice)
 				r.Delete("/devices", a.unregisterDevice)

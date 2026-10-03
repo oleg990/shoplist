@@ -21,7 +21,7 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-shoplist}:${POSTGRES_PASSWORD:-shoplist}@postgres:5432/${POSTGRES_DB:-shoplist}?sslmode=disable
       HTTP_ADDR: ":8080"
-      # Только для разработки. В проде: JWT_SECRET (openssl rand -hex 32), APP_ENV=production и SMTP_*.
+      # Только для разработки. В проде: JWT_SECRET (openssl rand -hex 32), APP_ENV=production.
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-0123456789abcdef}
     ports:
       - "8080:8080"

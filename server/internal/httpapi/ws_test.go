@@ -83,7 +83,7 @@ func expectMsg(t *testing.T, name string, c *websocket.Conn, typ, kind string) w
 
 func TestWSNotifiesListMembersOnly(t *testing.T) {
 	e := newListEnv(t)
-	stranger := login(t, e.srv, e.mailer, uniqueEmail())
+	stranger := login(t, e.srv, uniqueName())
 	owner, guest, out := dialWS(t, e.srv, e.owner), dialWS(t, e.srv, e.guest), dialWS(t, e.srv, stranger)
 
 	// Новая позиция: оба участника получают версию, посторонний ничего.
@@ -117,7 +117,7 @@ func TestWSNotifiesListMembersOnly(t *testing.T) {
 
 func TestWSMembershipChanges(t *testing.T) {
 	e := newListEnv(t)
-	newcomer := login(t, e.srv, e.mailer, uniqueEmail())
+	newcomer := login(t, e.srv, uniqueName())
 	owner, guest, newbie := dialWS(t, e.srv, e.owner), dialWS(t, e.srv, e.guest), dialWS(t, e.srv, newcomer)
 
 	// Вступление по коду: все текущие участники и сам вступивший узнают об изменении состава.
@@ -146,8 +146,8 @@ func TestWSMembershipChanges(t *testing.T) {
 }
 
 func TestWSAuthRules(t *testing.T) {
-	srv, mailer, _ := newTestEnv(t)
-	tk := login(t, srv.URL, mailer, uniqueEmail())
+	srv, _ := newTestEnv(t)
+	tk := login(t, srv.URL, uniqueName())
 
 	closeCode := func(c *websocket.Conn) websocket.StatusCode {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -185,8 +185,8 @@ func TestWSAuthRules(t *testing.T) {
 }
 
 func TestWSClosesWhenAccessTokenExpires(t *testing.T) {
-	srv, mailer, _ := newTestEnvTTL(t, 1500*time.Millisecond)
-	tk := login(t, srv.URL, mailer, uniqueEmail())
+	srv, _ := newTestEnvTTL(t, 1500*time.Millisecond)
+	tk := login(t, srv.URL, uniqueName())
 	c := dialWS(t, srv.URL, tk)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -206,8 +206,8 @@ func TestWSClosesWhenAccessTokenExpires(t *testing.T) {
 }
 
 func TestWSOldestConnectionIsDroppedBeyondLimit(t *testing.T) {
-	srv, mailer, _ := newTestEnv(t)
-	tk := login(t, srv.URL, mailer, uniqueEmail())
+	srv, _ := newTestEnv(t)
+	tk := login(t, srv.URL, uniqueName())
 	first := dialWS(t, srv.URL, tk)
 	for i := 0; i < 10; i++ {
 		dialWS(t, srv.URL, tk)

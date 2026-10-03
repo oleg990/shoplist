@@ -1,7 +1,5 @@
 // Сквозная проверка клиента и движка синхронизации против настоящего сервера.
-// Запуск: E2E_API_URL=http://localhost:8080 E2E_SERVER_LOG=/путь/к/логу npx jest e2e
-// (сервер без SMTP пишет коды входа в лог; см. docs/mobile-sync.md).
-import { readFileSync } from 'fs';
+// Запуск: E2E_API_URL=http://localhost:8080 npx jest e2e (сервер и Postgres должны быть запущены).
 import { ApiClient, type SessionStore, type Tokens } from '../src/api/client';
 import { makeCatalogApi, makeItemsApi } from '../src/api/items';
 import { makeListsApi } from '../src/api/lists';
@@ -14,25 +12,18 @@ import { RealtimeClient, wsUrl, type RealtimeEvent } from '../src/sync/realtime'
 const realFetch = require('node-fetch') as unknown as typeof fetch;
 
 const URL = process.env.E2E_API_URL;
-const LOG = process.env.E2E_SERVER_LOG;
-const run = URL && LOG ? describe : describe.skip;
+const run = URL ? describe : describe.skip;
 
 function memStore(): SessionStore {
   let t: Tokens | null = null;
   return { load: async () => t, save: async (x) => void (t = x), clear: async () => void (t = null) };
 }
 
-function codeFor(email: string): string {
-  const lines = readFileSync(LOG!, 'utf8').split('\n').filter((l) => l.includes('dev mailer') && l.includes(email));
-  const m = lines[lines.length - 1]?.match(/"code":"(\d{6})"/);
-  if (!m) throw new Error('code not found in log for ' + email);
-  return m[1];
-}
-
-async function login(email: string) {
+async function login(username: string) {
   const c = new ApiClient({ baseUrl: URL!, store: memStore(), fetchFn: realFetch });
-  await c.requestCode(email);
-  await c.verifyCode(email, codeFor(email));
+  const t = await c.register(username, 'e2e password 123', 'Тест');
+  expect(t.recovery_codes).toHaveLength(8);
+  await c.setSession(t);
   return c;
 }
 
@@ -47,9 +38,9 @@ const engineFor = (c: ApiClient) => new SyncEngine(new MemoryKv(), remoteOf(c), 
 run('against a real server', () => {
   const stamp = Date.now();
   test('login, share a list, sync offline edits between two users', async () => {
-    const a = await login(`a${stamp}@example.com`);
-    const b = await login(`b${stamp}@example.com`);
-    expect((await a.me()).email).toBe(`a${stamp}@example.com`);
+    const a = await login(`a${stamp}`);
+    const b = await login(`b${stamp}`);
+    expect((await a.me()).username).toBe(`a${stamp}`);
 
     // Список, приглашение, вход второго участника.
     const la = makeListsApi(a);
@@ -112,8 +103,8 @@ run('against a real server', () => {
   });
 
   test('WebSocket: a change by one member is announced to the other', async () => {
-    const a = await login(`wa${stamp}@example.com`);
-    const b = await login(`wb${stamp}@example.com`);
+    const a = await login(`wa${stamp}`);
+    const b = await login(`wb${stamp}`);
     const la = makeListsApi(a);
     const list = await la.create('Живой');
     await makeListsApi(b).accept((await la.invite(list.id)).code);

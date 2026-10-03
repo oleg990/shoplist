@@ -2,7 +2,7 @@
 
 Приложение «список покупок» для нескольких пользователей: общие списки, отметки «куплено», работа без сети, push-уведомления.
 
-Статус: ранняя разработка. Есть справочник товаров, вход по email-коду, списки с участниками, позиции с отметкой «куплено» мгновенные уведомления (WebSocket) и push через Expo; остальное по [плану](docs/plan.md).
+Статус: ранняя разработка. Есть справочник товаров, вход по логину и паролю, списки с участниками, позиции с отметкой «куплено» мгновенные уведомления (WebSocket) и push через Expo; остальное по [плану](docs/plan.md).
 
 ## Стек
 
@@ -19,14 +19,14 @@ curl localhost:8080/healthz
 curl "localhost:8080/api/v1/catalog/search?q=малоко"   # найдёт «Молоко», несмотря на опечатку
 ```
 
-В режиме разработки код входа не отправляется по почте, а пишется в лог сервера (`docker compose -f infra/docker-compose.yml logs server`):
+Регистрация и вход (почта не нужна; при регистрации выдаются 8 одноразовых кодов восстановления пароля):
 
 ```bash
-curl -X POST localhost:8080/api/v1/auth/request-code -d '{"email":"me@example.com"}'
-curl -X POST localhost:8080/api/v1/auth/verify -d '{"email":"me@example.com","code":"<код из лога>"}'
+curl -X POST localhost:8080/api/v1/auth/register -d '{"username":"olga","password":"correct horse battery","name":"Оля"}'
+curl -X POST localhost:8080/api/v1/auth/login -d '{"username":"olga","password":"correct horse battery"}'
 ```
 
-Настройки сервера (JWT, SMTP) описаны в `.env.example`.
+Настройки сервера (JWT и другие) описаны в `.env.example`.
 
 Без Docker для сервера: `docker compose -f infra/docker-compose.yml up -d postgres`, затем `make run`.
 

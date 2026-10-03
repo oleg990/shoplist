@@ -16,4 +16,4 @@ export const api = new ApiClient({
 });
 
 export { ApiError } from './client';
-export type { User } from './client';
+export type { Tokens, User } from './client';

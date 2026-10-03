@@ -104,9 +104,9 @@ func registerDevice(t *testing.T, srv string, who tokens, token string) {
 }
 
 func TestDeviceRegistration(t *testing.T) {
-	srv, mailer, pool := newTestEnv(t)
-	a := login(t, srv.URL, mailer, uniqueEmail())
-	b := login(t, srv.URL, mailer, uniqueEmail())
+	srv, pool := newTestEnv(t)
+	a := login(t, srv.URL, uniqueName())
+	b := login(t, srv.URL, uniqueName())
 	token := pushToken()
 	count := func(userID string) (n int) {
 		pool.QueryRow(context.Background(), `SELECT count(*) FROM devices WHERE user_id = $1`, userID).Scan(&n)
@@ -155,8 +155,8 @@ func TestDeviceRegistration(t *testing.T) {
 }
 
 func TestDeviceCapPerUser(t *testing.T) {
-	srv, mailer, pool := newTestEnv(t)
-	u := login(t, srv.URL, mailer, uniqueEmail())
+	srv, pool := newTestEnv(t)
+	u := login(t, srv.URL, uniqueName())
 	for i := 0; i < 23; i++ {
 		registerDevice(t, srv.URL, u, pushToken())
 	}
@@ -169,7 +169,7 @@ func TestDeviceCapPerUser(t *testing.T) {
 
 func TestPushOnNewItemGoesToOthersOnly(t *testing.T) {
 	e := newListEnv(t)
-	stranger := login(t, e.srv, e.mailer, uniqueEmail())
+	stranger := login(t, e.srv, uniqueName())
 	call(t, "PATCH", e.srv+"/api/v1/me", e.owner.AccessToken, map[string]string{"name": "Оля"}, nil)
 	ownerTok, guestTok, guestTok2, strangerTok := pushToken(), pushToken(), pushToken(), pushToken()
 	registerDevice(t, e.srv, e.owner, ownerTok)
@@ -204,7 +204,7 @@ func TestPushBatchesRapidAdditions(t *testing.T) {
 	}
 	got := e.expo.waitFor(t, 1)
 	e.expo.expectNone(t, 1)
-	if got[0].Body != "Добавлено 5: Хлеб, Молоко, Яйца и ещё 2 (Кто-то)" {
+	if got[0].Body != "Добавлено 5: Хлеб, Молоко, Яйца и ещё 2 (Тест)" {
 		t.Fatalf("body = %q", got[0].Body)
 	}
 }

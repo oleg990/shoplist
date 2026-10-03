@@ -53,43 +53,133 @@ paths:
                   items:
                     type: array
                     items: { $ref: "#/components/schemas/Category" }
-  /api/v1/auth/request-code:
+  /api/v1/auth/register:
     post:
-      summary: Отправить код входа на email (аккаунт создаётся при первом входе)
+      summary: Создать аккаунт по логину и паролю
+      description: "Логин: 3–32 символа (латиница, цифры, «.», «_», «-»), без учёта регистра. Пароль: 8–128 символов. В ответе один раз приходят 8 одноразовых кодов восстановления (recovery_codes)."
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [email]
+              required: [username, password]
               properties:
-                email: { type: string, format: email }
+                username: { type: string }
+                password: { type: string, format: password }
+                name: { type: string }
       responses:
-        "204": { description: Код отправлен }
-        "400": { description: Некорректный email }
-        "429": { description: Код запрашивали меньше минуты назад (см. Retry-After) }
-  /api/v1/auth/verify:
+        "201":
+          description: Токены и коды восстановления
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tokens" }
+        "400": { description: Некорректный логин или пароль }
+        "409": { description: Логин занят }
+  /api/v1/auth/login:
     post:
-      summary: Проверить код и получить токены
-      description: Код действует 10 минут, после 5 неверных попыток блокируется.
+      summary: Войти
+      description: После 10 неверных попыток подряд аккаунт блокируется на 15 минут (429 с Retry-After).
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [email, code]
+              required: [username, password]
               properties:
-                email: { type: string, format: email }
-                code: { type: string, example: "123456" }
+                username: { type: string }
+                password: { type: string, format: password }
       responses:
         "200":
           description: Токены
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Tokens" }
-        "401": { description: Неверный или просроченный код }
+        "401": { description: Неверный логин или пароль }
+        "429": { description: Аккаунт временно заблокирован (см. Retry-After) }
+  /api/v1/auth/recover:
+    post:
+      summary: Сменить пароль по коду восстановления
+      description: Код одноразовый. После восстановления все сессии отзываются; новые коды не выдаются.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, code, new_password]
+              properties:
+                username: { type: string }
+                code: { type: string, example: K7M2Q-9PX4A }
+                new_password: { type: string, format: password }
+      responses:
+        "200":
+          description: Токены
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tokens" }
+        "401": { description: Неверный логин или код }
+        "429": { description: Аккаунт временно заблокирован }
+  /api/v1/me/password:
+    put:
+      summary: Сменить пароль (нужен текущий)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [old_password, new_password]
+              properties:
+                old_password: { type: string, format: password }
+                new_password: { type: string, format: password }
+      responses:
+        "200":
+          description: Новые токены (остальные сессии отозваны)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Tokens" }
+        "400": { description: Слабый пароль }
+        "401": { description: Неверный текущий пароль }
+        "429": { description: Аккаунт временно заблокирован }
+  /api/v1/me/recovery-codes:
+    get:
+      summary: Сколько кодов восстановления не использовано
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Количество
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  unused: { type: integer }
+    post:
+      summary: Выпустить новые коды восстановления (старые перестают работать)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, format: password }
+      responses:
+        "200":
+          description: Новые коды, показываются один раз
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  recovery_codes: { type: array, items: { type: string } }
+        "401": { description: Неверный пароль }
+        "429": { description: Аккаунт временно заблокирован }
   /api/v1/auth/refresh:
     post:
       summary: Обменять refresh-токен на новую пару токенов
@@ -288,7 +378,7 @@ paths:
         - { name: listID, in: path, required: true, schema: { type: string, format: uuid } }
     get:
       summary: Участники списка
-      description: Если имя не задано, вместо него приходит замаскированный email (o***@gmail.com).
+      description: Если имя не задано, приходит логин.
       security: [{ bearerAuth: [] }]
       responses:
         "200":
@@ -524,7 +614,7 @@ components:
       type: object
       properties:
         id: { type: string, format: uuid }
-        email: { type: string, format: email }
+        username: { type: string }
         name: { type: string }
     Tokens:
       type: object
@@ -533,6 +623,7 @@ components:
         refresh_token: { type: string, description: Одноразовый, живёт 90 дней }
         expires_in: { type: integer, example: 900 }
         user: { $ref: "#/components/schemas/User" }
+        recovery_codes: { type: array, items: { type: string }, description: Только в ответе на register }
     CatalogItem:
       type: object
       properties:

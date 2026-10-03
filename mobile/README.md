@@ -20,9 +20,9 @@ npm run typecheck   # tsc
 npm test            # jest (API-клиент)
 npm run export:web  # сборка бандла, ловит ошибки импортов
 
-# Сквозная проверка против настоящего сервера (без SMTP сервер пишет коды входа в лог):
-#   make dev   # или запустите сервер сами и направьте его вывод в файл
-E2E_API_URL=http://localhost:8080 E2E_SERVER_LOG=/путь/к/логу сервера npm run test:e2e
+# Сквозная проверка против настоящего сервера:
+#   make dev   # или запустите сервер сами
+E2E_API_URL=http://localhost:8080 npm run test:e2e
 ```
 
 ## Структура
