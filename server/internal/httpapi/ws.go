@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"net/url"
 	"time"
 
 	"net/http"
@@ -25,7 +26,7 @@ const (
 // клиент обновляет токен и подключается заново. После подключения (и после любого разрыва)
 // клиент должен один раз запросить изменения через GET .../items?since=N.
 func (a *API) ws(w http.ResponseWriter, r *http.Request) {
-	conn, err := websocket.Accept(w, r, nil)
+	conn, err := websocket.Accept(w, r, a.wsAcceptOptions())
 	if err != nil {
 		return // Accept уже ответил клиенту
 	}
@@ -94,4 +95,18 @@ func (a *API) ws(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// wsAcceptOptions пускает в WebSocket браузеры с разрешённых адресов (по умолчанию только тот же хост).
+func (a *API) wsAcceptOptions() *websocket.AcceptOptions {
+	if len(a.origins) == 0 {
+		return nil
+	}
+	patterns := make([]string, 0, len(a.origins))
+	for _, o := range a.origins {
+		if u, err := url.Parse(o); err == nil && u.Host != "" {
+			patterns = append(patterns, u.Host)
+		}
+	}
+	return &websocket.AcceptOptions{OriginPatterns: patterns}
 }

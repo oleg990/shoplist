@@ -35,15 +35,29 @@ type API struct {
 	hub     *realtime.Hub
 	push    *push.Service
 	log     *slog.Logger
+	origins []string
 }
 
-func NewRouter(db Pinger, queries *store.Queries, authSvc *auth.Service, listsSvc *lists.Service, itemsSvc *items.Service, hub *realtime.Hub, pushSvc *push.Service, log *slog.Logger) http.Handler {
+// Option настраивает роутер.
+type Option func(*API)
+
+// WithAllowedOrigins разрешает веб-клиентам с этих адресов (например http://localhost:8081) ходить в API и WebSocket.
+// Пустой список (по умолчанию) отключает CORS: мобильным приложениям он не нужен.
+func WithAllowedOrigins(origins []string) Option {
+	return func(a *API) { a.origins = origins }
+}
+
+func NewRouter(db Pinger, queries *store.Queries, authSvc *auth.Service, listsSvc *lists.Service, itemsSvc *items.Service, hub *realtime.Hub, pushSvc *push.Service, log *slog.Logger, opts ...Option) http.Handler {
 	a := &API{db: db, queries: queries, auth: authSvc, lists: listsSvc, items: itemsSvc, hub: hub, push: pushSvc, log: log}
+	for _, o := range opts {
+		o(a)
+	}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
+	r.Use(a.cors)
 
 	// Лимиты по IP (в памяти одного процесса). Общий — защита от перегрузки; на вход строже: перебор кодов и спам письмами.
 	general := limit(20, 200)

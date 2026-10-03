@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -14,6 +15,8 @@ type Config struct {
 	JWTSecret       string
 	// Env: "development" (по умолчанию) или "production".
 	Env string
+	// CORSOrigins: адреса веб-клиентов через запятую (CORS_ORIGINS), например http://localhost:8081. Для мобильных приложений не нужно.
+	CORSOrigins []string
 	// ExpoAccessToken нужен, только если в проекте Expo включена защита push-токенов; ExpoPushURL менять не требуется.
 	ExpoAccessToken string
 	ExpoPushURL     string
@@ -28,6 +31,7 @@ func Load() (Config, error) {
 		ExpoAccessToken: os.Getenv("EXPO_ACCESS_TOKEN"),
 		ExpoPushURL:     os.Getenv("EXPO_PUSH_URL"),
 		Env:             getenv("APP_ENV", "development"),
+		CORSOrigins:     splitList(os.Getenv("CORS_ORIGINS")),
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required")
@@ -43,4 +47,14 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func splitList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
