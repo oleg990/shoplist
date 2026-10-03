@@ -58,7 +58,7 @@ func run(log *slog.Logger) error {
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           httpapi.NewRouter(pool, store.New(pool), authSvc, lists.NewService(pool), items.NewService(pool, pushSvc), hub, pushSvc, log),
+		Handler:           httpapi.NewRouter(pool, store.New(pool), authSvc, lists.NewService(pool), items.NewService(pool, pushSvc), hub, pushSvc, log, httpapi.WithAllowedOrigins(cfg.CORSOrigins)),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

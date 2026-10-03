@@ -23,6 +23,8 @@ services:
       HTTP_ADDR: ":8080"
       # Только для разработки. В проде: JWT_SECRET (openssl rand -hex 32), APP_ENV=production.
       JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-0123456789abcdef}
+      # Для запуска приложения в браузере (npx expo start --web). Только для разработки.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081}
     ports:
       - "8080:8080"
     depends_on:
